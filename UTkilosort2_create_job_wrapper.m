@@ -269,10 +269,10 @@ fprintf(['Created job: ',fn,'\n'])
 if(1)
     rundataid=0;
     if job.kilosortVersion==3
-        progname='matlabbgLAS queuerun';
+        progname='matlabbg queuerun';
         parmstring=['UTkilosort3_run_job(''',fn,''');'];
     elseif job.kilosortVersion==2.5
-        progname='matlabbgLAS queuerun';
+        progname='matlabbg queuerun';
         parmstring=['UTkilosort2pt5_run_job(''',fn,''');'];
     else
         progname='matlabbg queuerun';
@@ -281,7 +281,7 @@ if(1)
     allowqueuemaster=1;
     note=['Kilosort job: ',job.name];
     user=getenv('USER');
-    user = 'nems';
+    user = 'lbhb';
     r=dbGetConParms();
     rtemp=r;
     rtemp.DB_SERVER='hyrax.ohsu.edu:3306';
@@ -301,5 +301,5 @@ if(1)
     
     fprintf('\n')
     disp(['<a href="http://hyrax.ohsu.edu/celldb/queuemonitor.php?user=%25&complete=-2&machinename=%25&notemask=',job.name,'">Check job status</a>'])
-    disp(['<a href="http://hyrax.ohsu.edu/celldb/queuemonitor.php?user=%&complete=-1&machinename=hyena&notemask=">See what''s running on Hyena</a>'])
+    disp(['<a href="http://hyrax.ohsu.edu/celldb/queuemonitor.php?user=%&complete=-1&machinename=manatee&notemask=">See what''s running on manatee</a>'])
 end    
