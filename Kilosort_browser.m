@@ -2,7 +2,7 @@ function parent_handle = Kilosort_browser(parent_handle)
 
 global SERVER_PATH 
 KSpaths=UTkilosort_paths();
-h = 900;  % Total window height
+h = 610;  % Total window height
 w = 950; % Total window width
 ht=500;
 pad=3;
@@ -49,12 +49,6 @@ handles.save_to_db_button = uicontrol('Parent', parent_handle,...
     'Max', 1, 'Min', 1, ...
     'Position', [do_buttons_hpos ht+3*ts 200 ts], ...
     'Callback', @save_to_db_callback);
-handles.use_merged = uicontrol('Parent', parent_handle,...
-    'Style', 'checkbox', 'Units', 'pixels',...
-    'HorizontalAlignment', 'left', 'String', 'Use automerged', ...
-    'Value', 0, ...
-    'BackgroundColor',[.8 .8 .8],...
-    'Position', [do_buttons_hpos ht+2*ts 200 ts]);
 
 handles.delete_job_button = uicontrol('Parent', parent_handle,...
     'Style', 'pushbutton', 'Units', 'pixels',...
@@ -80,8 +74,8 @@ handles.load_job_button = uicontrol('Parent', parent_handle,...
 handles.job_table = uitable('Parent', parent_handle, ...
     'Enable', 'on', 'Units', 'pixels',...
     'RowName', [], ...
-    'ColumnWidth', {500,80,80,80,80}, ...
-    'ColumnName', {'Name', 'Sorted', 'Saved in Phy','Automerged |saved in Phy','Saved to|database'}, ...
+    'ColumnWidth', {700,80,80,80}, ...
+    'ColumnName', {'Name', 'Sorted', 'Saved in Phy','Saved to|database'}, ...
     'Position', [pad pad w-pad*2 ht]);
 
 
@@ -99,8 +93,12 @@ jobs=[];
 ji=[];
 %reload_job_table
 
-    function job_table_row_selected(a,~,~)
-        ji = a.getSelectedRows()+1;
+    function job_table_row_selected(Hobj,ev,a)
+        ji = Hobj.getSelectedRows()+1;
+        j=load([jobs(ji).pth filesep jobs(ji).name],'results_path');
+        r_pth=j.results_path;
+        cmd=['phy_lbhb template-gui ' r_pth filesep 'params.py\n'];
+        fprintf(cmd)
     end
 
     function reload_job_table(Hobj,ev)
@@ -120,7 +118,6 @@ ji=[];
                     tmp=load([pth filesep jobs(i).name],'status','results_path');
                     jobs(i).sorted=logical(tmp.status);
                     jobs(i).saved_in_phy=exist([tmp.results_path filesep 'cluster_group.tsv'],'file')==2;
-                    jobs(i).automerged_saved_in_phy=exist([tmp.results_path '_after_automerge' filesep 'cluster_group.tsv'],'file')==2;
                     ss=strsep(strrep(jobs(i).name,'.mat',''),'_');
                     jobs(i).pen=ss{1};
                     jobs(i).rn1=ss{2};
@@ -163,7 +160,6 @@ ji=[];
                     tmp=load([pth filesep Cjobs(i).name],'status','results_path');
                     Cjobs(i).sorted=logical(tmp.status);
                     Cjobs(i).saved_in_phy=exist([tmp.results_path filesep 'cluster_group.tsv'],'file')==2;
-                    Cjobs(i).automerged_saved_in_phy=exist([tmp.results_path '_after_automerge' filesep 'cluster_group.tsv'],'file')==2;
                     ss=strsep(Cjobs(i).name,'_');
                     Cjobs(i).pen=ss{1};
                     Cjobs(i).rn1=ss{2};
@@ -181,13 +177,12 @@ ji=[];
         
         
         l = length(jobs);
-        c = cell(l,5);
+        c = cell(l,4);
         for i = 1:l
             c{i,1} = jobs(i).name(1:end-4);
             c{i,2} = jobs(i).sorted;
             c{i,3} = jobs(i).saved_in_phy;
-            c{i,4} = jobs(i).automerged_saved_in_phy;
-            c{i,5} = jobs(i).saved_in_db;
+            c{i,4} = jobs(i).saved_in_db;
         end
         set(handles.job_table, 'Data', c);
         a=2;
@@ -202,11 +197,7 @@ ji=[];
         enable_buttons(0);
         j=load([jobs(ji).pth filesep jobs(ji).name]);
         r_pth=j.results_path;
-        if get(handles.use_merged,'Value')
-            r_pth=[r_pth '_after_automerge']; 
-        end
-        cmd=['source activate phy; phy template-gui ',...
-            r_pth filesep 'params.py'];
+        cmd=['phy_lbhb template-gui ' r_pth filesep 'params.py'];
         if(strcmp(st,'alt'))
             cmd=[cmd,' &'];
         end
@@ -240,7 +231,8 @@ ji=[];
             'Description', ['Saving ',jobs(ji).name,...
             '. Set save parameters:'],...
             'title'      , 'Kilosort save options',...
-            {'Use automerged'; 'use_automerge'}, logical(get(handles.use_merged,'Value')),...
+            'WindowWidth',600,...
+            'ControlWidth',450,...
             {'Save to temp'; 'load_as_temp'}, false,...
             {'Force compute quality'; 'force_compute_quality_measures'}, false,...
             {'Append unit numbers'; 'append_units'}, false,...
@@ -251,7 +243,7 @@ ji=[];
         
         if(strcmp(button,'OK'))
             savfiles=UTkilosort_load_completed_job([jobs(ji).pth filesep jobs(ji).name],...
-                s.use_automerge, s.load_as_temp, s.force_compute_quality_measures, ...
+                0, s.load_as_temp, s.force_compute_quality_measures, ...
                 s.append_units, s.keep_zero_resp_units,...
                 s.delete_existing_spkfile, s.purge_rawids, s.remove_ids);
             reload_job_table();
@@ -259,7 +251,7 @@ ji=[];
         
     end
     function enable_buttons(en)
-        list={'name','view_in_phy_button','save_to_db_button','use_merged',...
+        list={'name','view_in_phy_button','save_to_db_button',...
             'job_table','delete_job_button'};
         for i=1:length(list)
             if(en)
