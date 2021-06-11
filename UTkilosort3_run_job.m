@@ -66,7 +66,7 @@ if w, error(s), end
 %% you need to change most of the paths in this block
 % Kilosort2 master start. MLE.
 
-addpath(genpath([MULTICHANNEL_SORTING_PATH, 'KiloSort'])) % path to kilosort folder
+addpath(genpath([MULTICHANNEL_SORTING_PATH, 'KiloSort3'])) % path to kilosort folder
 addpath([MULTICHANNEL_SORTING_PATH, 'npy-matlab']) % path to npy-matlab
 
 %% LBHB preprocessing
@@ -161,10 +161,11 @@ rez = preprocessDataSub(job);
 
 % NEW STEP TO DO DATA REGISTRATION
 rez = datashift2(rez, 1); % last input is for shifting data
-UTsave([job.results_path filesep 'drift_map'],{'fig'})
+set(gcf,'Color','w');
+saveas(gcf,[job.results_path filesep 'drift_map'],'fig')
 set(findall(gcf,'LineStyle','--'),'Visible','off')
-UTsave([job.results_path filesep 'drift_map'],{'png_e'})
-if getOr(job, 'recompute_drift_map_after_shifting', 0)
+export_fig([job.results_path filesep 'drift_map.png'],'-png','-a1','-m3','-q100')
+if getOr(job, 'recompute_drift_map_after_shifting', 1)
     rez_recalc=rmfield(rez,{'wTEMP','wPCA','iC','dist','iorig','dshift','st0','F','F0','F0m'});
     rez_recalc.ops=rmfield(rez_recalc.ops,{'dmin','yup','dminx','xup'});
     rez_recalc = datashift2(rez_recalc,0);
@@ -173,9 +174,10 @@ if getOr(job, 'recompute_drift_map_after_shifting', 0)
         rez.post_shift.(fns{i})=rez_recalc.(fns{i});
     end
     title('Post-shift drift map')
-    UTsave([job.results_path filesep 'drift_map_post_shift'],{'fig'})
+    set(gcf,'Color','w');
+    saveas(gcf,[job.results_path filesep 'drift_map_post_shift'],'fig')
     set(findall(gcf,'LineStyle','--'),'Visible','off');
-    UTsave([job.results_path filesep 'drift_map_post_shift'],{'png_e'})
+    export_fig([job.results_path filesep 'drift_map_post_shift.png'],'-png','-a1','-m3','-q100')
 end
 
 [rez, st3, tF]     = extract_spikes(rez);
