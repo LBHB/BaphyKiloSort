@@ -39,14 +39,13 @@ unit_numbering_offset=0; %use this to make units 1:3 be units 11:13 (for example
 merge_all=0;
 force_best_channels_to_one=0;
 
-use_automerge=getparmC(varargin,1,0);
+use_automerge=getparmC(varargin,1,0); %Depreciated (sued by Kilosort 1 but not > 2)
 load_as_temp=getparmC(varargin,2,0);
 force_compute_quality_measures=getparmC(varargin,3,0);
 append_units=getparmC(varargin,4,0);
-keep_zero_resp_units=getparmC(varargin,5,0);
-delete_existing_spkfile=getparmC(varargin,6,load_as_temp);
-purge_rawids=getparmC(varargin,7,[]);
-remove_ids=getparmC(varargin,8,[]);
+delete_existing_spkfile=getparmC(varargin,5,load_as_temp);
+purge_rawids=getparmC(varargin,6,[]);
+remove_ids=getparmC(varargin,7,[]);
 
 if(use_automerge)
     suffix='_after_automerge';
@@ -175,6 +174,13 @@ if(exist(snrs_file,'file'))
     snrs=readNPY(snrs_file);
 else
     snrs=[];
+end
+
+mean_waveforms_file=[job.results_path,suffix,filesep,'mean_waveforms.npy'];
+if(exist(mean_waveforms_file,'file'))
+    mean_waveforms_phy=readNPY(mean_waveforms_file);
+else
+    mean_waveforms_phy=[];
 end
 
 % Reading in wave stats and waveform classifications
@@ -498,6 +504,11 @@ for run_idx=1:length(job.runs)
                 s{i}(final_ui,1).sorter=getenv('USER');
             end
             s{i}(final_ui).primary=1;
+            if ~delete_existing_spkfile && append_units
+                s{i}(final_ui).primary=0;
+                % If appending and not deleting, set primary to 0 to keep existing sort indexes
+                % as they are, so database doen't need to be updated because old sorts got moved to sortidx2
+            end
             s{i}(final_ui).comments='Sorted by KiloSort, manually curated by phy. Type is: ';
             if(~isempty(good_kids) && ~any(ismember(ids(units(un_idx)),good_kids)))
                 ut(j)=2;
@@ -512,6 +523,11 @@ for run_idx=1:length(job.runs)
             gSingleRawFields.unit_type{i}(final_ui)=ut(j);
             s{i}(final_ui).unitSpikes=spiketimes_this_trial(:,idx);
             s{i}(final_ui).Template=mean(templates(:,:,ismember(all_units,units(un_idx))),3);
+            if isempty(mean_waveforms_phy)
+                s{i}(final_ui).MeanWaveform=[];
+            else
+                s{i}(final_ui).MeanWaveform=mean_waveforms_phy(:,ismember(all_units,units(un_idx)));
+            end
             s{i}(final_ui).env=[ones(size(s{i}(final_ui).Template)),repmat(s{i}(final_ui).Template,1,2)];
             s{i}(final_ui).Ncl=length(uuns) ;%clusters in this channel, redundant
             s{i}(final_ui).xaxis=[];
@@ -616,7 +632,22 @@ for run_idx=1:length(job.runs)
         savfile = [job.runs_root filesep 'sorted' filesep job.runs{run_idx}(1:end-2) '.spk.mat'];
     end
     if(delete_existing_spkfile && exist(savfile,'file'))
-        delete(savfile)
+        file_exists=true;
+        while file_exists
+            lastwarn('')
+            delete(savfile)
+            [warnMsg, warnId] = lastwarn;
+            if ~isempty(warnMsg) && strcmp(warnId,'MATLAB:DELETE:Permission')
+                a=questdlg(['Warning! Permission denied when trying to delete ' savfile '. Delete manually usuing sudo then Continue. Or Cancel saving.'],'Permission Denied','Continue','Cancel','Cancel');
+                if strcmp(a,'Cancel')
+                    savfiles=[];
+                    fprintf('\n Cancelled')
+                    return
+                end
+            else
+                file_exists = exist(savfile,'file');
+            end
+        end
     end
     extras.StimTagNames=exptparams_{run_idx}.TrialObject.ReferenceHandle.Names;
     extras.npoint=job.nSamplesBlocks(run_idx);
@@ -640,6 +671,8 @@ for run_idx=1:length(job.runs)
     
     goodtrials=repmat({''},max(cellfun(@length,s)),1); % OR '1:x' OR 'x:y' for excluding trials
     
+    sortidxs=savespikes_do_save(savfile,s,best_channels,extras,format,rate,nrec);
+
     if(~load_as_temp)
         % need to talk to the celldb database
         fprintf('Saving to database\n')
@@ -650,7 +683,7 @@ for run_idx=1:length(job.runs)
         % temporarily connect to NEMS db
         %dbSetConParms(rtemp);
         
-        dblink_phy(savfile,s,best_channels,extras,gSingleRawFields,goodtrials,keep_zero_resp_units);
+        dblink_phy(savfile,s,best_channels,sortidxs,extras,gSingleRawFields,goodtrials,keep_zero_resp_units);
         %matchcell2file_fn({savfile},{this_baphy_source},s,best_channels,extras,gSingleRawFields,goodtrials);
         
         % Now, save celltypes information to db
@@ -677,7 +710,6 @@ for run_idx=1:length(job.runs)
         % restore old db connection
         %dbSetConParms(r);
     end
-    savespikes_do_save(savfile,s,best_channels,extras,format,rate,nrec)
     
     %copy over additional fields
     seplocs = strfind(this_baphy_source,filesep);
