@@ -683,7 +683,7 @@ for run_idx=1:length(job.runs)
         % temporarily connect to NEMS db
         %dbSetConParms(rtemp);
         
-        dblink_phy(savfile,s,best_channels,sortidxs,extras,gSingleRawFields,goodtrials,keep_zero_resp_units);
+        dblink_phy(savfile,s,best_channels,sortidxs,extras,gSingleRawFields,goodtrials);
         %matchcell2file_fn({savfile},{this_baphy_source},s,best_channels,extras,gSingleRawFields,goodtrials);
         
         % Now, save celltypes information to db
