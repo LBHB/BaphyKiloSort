@@ -5,7 +5,7 @@ try
     D = gpuDevice;
     ops.GPU             = 1; % whether to run this code on an Nvidia GPU (much faster, mexGPUall first)
 catch err
-    if strcmp(err.identifier,'parallel:gpu:NoDriver') || strcmp(err.identifier,'parallel:gpu:device:DriverRedirect')
+    if strcmp(err.identifier,'parallel:gpu:NoDriver') || strcmp(err.identifier,'parallel:gpu:device:DriverRedirect') || strcmp(err.identifier,'parallel:gpu:device:CouldNotLoadDriver')
         ops.GPU         = 0; % whether to run this code on an Nvidia GPU (much faster, mexGPUall first)
     else
         rethrow(err)
