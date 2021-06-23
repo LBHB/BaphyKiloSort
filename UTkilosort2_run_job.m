@@ -140,6 +140,75 @@ job.trial_onsets = trial_onsets;
 job.runs_per_trial = runs_per_trial;
 job.sampleRate = sampleRate;
 
+
+%% Runs the photoelectric artifact corrections
+
+% check if need to remove laser artifacts
+remove_laser_artifact_sec = getparm(job, 'remove_laser_artifact_sec', 0);
+interp_laser_sec = getparm(job, 'interp_laser_sec', 0);
+if remove_laser_artifact_sec>0
+   
+    fprintf('correcting photoelectric artifact')
+    fprintf('removing %.3f sec around on/off\n', ...
+            remove_laser_artifact_sec);
+    if interp_laser_sec>0
+      fprintf('interpolating %.5f sec around on/off\n', interp_laser_sec);
+    end
+    
+    tic
+    % need to get experiments with laser stim and  events to figure out 
+    % when laser was turned on/off, so supply baphy events file
+    ncorr = 0;
+    for j=1:length(job.runs)
+        
+        parmfile = fullfile(job.runs_root, job.runs{j});
+        parmout = LoadMFile(parmfile);
+        exptparams = parmout.exptparams;
+        exptevents = parmout.exptevents;
+        
+        if ~strcmp(exptparams.TrialObjectClass,'RefTarOpt')
+            % skips no opto experiments
+            continue
+        else
+            fprintf('block %d\n', j);
+            ncorr = ncorr + 1;
+        end 
+               
+        spikefs = job.fs;
+        
+        % reads from the big binary file, the chunk corresponding to the
+        % experiment block
+        fbin = fopen(job.fbinary, 'r+');  
+        offset = job.Nchan * sum(job.nSamplesBlocks(1:j-1)) * 2;
+        fseek(fbin, offset, 'bof');
+        all_samples = fread(fbin, [job.Nchan, job.nSamplesBlocks(j)], 'int16');
+        
+        for chan = 1:size(all_samples,1)
+          tc = all_samples(chan,:)';
+          tc_out = remove_opto_artifacts(tc,...
+             job.trial_onsets_{j} -sum(job.nSamplesBlocks(1:j-1)),...
+             spikefs, exptparams, exptevents, ...
+             remove_laser_artifact_sec, interp_laser_sec);
+          all_samples(chan,:) = int16(tc_out)';
+        end
+        
+        % writes back to the same file location
+        fseek(fbin, offset, 'bof');
+        fwrite(fbin, all_samples, 'int16');
+        fclose(fbin);
+        clear('all_samples');
+    end
+    if ncorr > 0
+        fprintf('done correcting photoelectric artifact, ')
+    else
+        fprintf('no RefTarOpt experiments found')
+    end
+    toc
+    fprintf('\n')
+end
+
+%%% End LBHB special code
+
 %% LBHB save block (different concatenated files) sizes and start times
 blocksizes=job.nSamplesBlocks;
 blockstarts=job.StartTime_re_Run1*job.chanMap.fs;
