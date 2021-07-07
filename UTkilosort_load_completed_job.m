@@ -1,15 +1,16 @@
-function savfiles=UTkilosort_load_completed_job(job_file,varargin)
+function savfiles=UTkilosort_load_completed_job(job_file,options)
 %UTkilosort_load_completed_job(job_file)
-%UTkilosort_load_completed_job(job_file,load_as_temp,force_compute_quality_measures,use_automerge,delete_existing_spkfile,append_units)
+%UTkilosort_load_completed_job(job_file,options)
 % converts templates and spike assignments created by kilosort (and phy
 % if present) to *.spk.mat file readable by Baphy.
 
 % Inputs:
 % job_file: path to file containing parameters for this job
-% load_as_temp: if true, stores results in temporary location instead of on server
-% force_compute_quality_measures: if true, computes quality measures (these
-% will be computed by default if load_ as_temp is true, but not if it is
-% false).
+% options: structure of options:
+    % load_as_temp: if true, stores results in temporary location instead of on server
+    % force_compute_quality_measures: if true, computes quality measures (these
+    % will be computed by default if load_ as_temp is true, but not if it is
+    % false).
 
 % Outputs:
 % savefiles: paths to created .spk.mat file
@@ -34,20 +35,25 @@ if ~exist('readNPY.m','file')
     error('readNPY not found. Is MULTICHANNEL_SORTING_PATH set so that the npy-matlab package is available?')
 end
 
-good_kids=[];%[109 100 103 108 110]; % good kilosort indicies
-unit_numbering_offset=0; %use this to make units 1:3 be units 11:13 (for example if you want to make the unique from other runs)
-merge_all=0;
-force_best_channels_to_one=0;
+options.use_automerge=getparm(options,'use_automerge',0); %Depreciated (sued by Kilosort 1 but not > 2)
+options.load_as_temp=getparm(options,'load_as_temp',0);
+options.force_compute_quality_measures=getparm(options,'force_compute_quality_measures',0);
+options.append_units=getparm(options,'append_units',0);
+options.delete_existing_spkfile=getparm(options,'delete_existing_spkfile',options.load_as_temp);
+options.purge_rawids=getparm(options,'purge_rawids',[]);
+options.remove_Kids=getparm(options,'remove_Kids',[]); %Kid means KiloSort id
+options.keep_Kids=getparm(options,'keep_Kids',[]);
 
-use_automerge=getparmC(varargin,1,0); %Depreciated (sued by Kilosort 1 but not > 2)
-load_as_temp=getparmC(varargin,2,0);
-force_compute_quality_measures=getparmC(varargin,3,0);
-append_units=getparmC(varargin,4,0);
-delete_existing_spkfile=getparmC(varargin,5,load_as_temp);
-purge_rawids=getparmC(varargin,6,[]);
-remove_ids=getparmC(varargin,7,[]);
+%Options currently not set by Kilosort_browser
+options.unit_numbering_offset=getparm(options,'unit_numbering_offset',0); %use this to make units 1:3 be units 11:13 (for example if you want to make the unique from other runs)
+options.merge_all_units=getparm(options,'merge_all_units',0); %Merges all units into a single unit, assigned to the channel of the lowest Kid number
+options.force_best_channels_to_one=getparm(options,'force_best_channels_to_one',0); %Sets all units to be on channel 1
 
-if(use_automerge)
+if ~isempty(options.keep_Kids) && ~isempty(options.remove_Kids)
+    error('Either define keep_Kids to tell me which ids to keep, or remove_Kids to tel me which to remove')
+end
+    
+if(options.use_automerge)
     suffix='_after_automerge';
 else
     suffix='';
@@ -60,7 +66,7 @@ for i=1:length(job.runs)
     exptevents_{i}=exptevents;
 end
 
-if(use_automerge)
+if(options.use_automerge)
     rez=load([job.results_path_temp,filesep,'rez.mat'],'Wraw');
     rez_am=load([job.results_path_temp,filesep,'rez',suffix,'.mat'],'st3');
     rez.st3=rez_am.st3;
@@ -123,7 +129,7 @@ C = textscan(fid,'%d %s',-1,'Headerlines',1,'Delimiter','\t');
 fclose(fid);
 ids=C{1};
 group=C{2};
-if(merge_all)
+if(options.merge_all_units)
     ids=min(ids);
     group={'mua'};
     clusts(:)=min(clusts);
@@ -141,10 +147,10 @@ mus=find(strcmp(group,'mua'));
 all_units=sort([sus;mus]); %units to save
 %all_units=sort([sus]); %units to save
 
-if ~isempty(remove_ids)
-    mi = ismember(ids(all_units),remove_ids);
-    if sum(mi) < length(remove_ids)
-        s1=sprintf('%d ', remove_ids);s1(end)=[];
+if ~isempty(options.remove_Kids)
+    mi = ismember(ids(all_units),options.remove_Kids);
+    if sum(mi) < length(options.remove_Kids)
+        s1=sprintf('%d ', options.remove_Kids);s1(end)=[];
         s2=sprintf('%d ', ids(all_units)); s2(end)=[];
         a=questdlg(['Warning! Requested ids to remove (',s1,') not all found in id list (',s2,')'],'Dont''t save ids not found','Continue','Cancel','Cancel');
         if strcmp(a,'Cancel')
@@ -153,7 +159,7 @@ if ~isempty(remove_ids)
             return
         end
         end
-    all_units(ismember(ids(all_units),remove_ids))=[];
+    all_units(ismember(ids(all_units),options.remove_Kids))=[];
 end
 
 
@@ -166,7 +172,7 @@ if(exist(best_chan_file,'file'))
 else
     best_channels_phy=[];
 end
-if(merge_all)
+if(options.merge_all_units)
     best_channels_phy=1;
 end
 snrs_file=[job.results_path,suffix,filesep,'snrs.npy'];
@@ -205,7 +211,7 @@ site = site{1};
 site = site(1:7);
 
 merge_results_file=[job.results_path,suffix,filesep,'cluster_names.ts'];
-if ~append_units && (exist(merge_results_file,'file'))
+if ~options.append_units && (exist(merge_results_file,'file'))
     fprintf('Merge results file exists, using: %s\n',merge_results_file)
     fid= fopen(merge_results_file);
     C = textscan(fid,'%d %d %d %d',-1,'Headerlines',1,'Delimiter','\t');
@@ -272,7 +278,7 @@ elseif(~isempty(best_channels_phy))
     best_channel=best_channels_phy(all_units);
 end
 
-if(force_best_channels_to_one)
+if(options.force_best_channels_to_one)
     best_channel(:)=1;
 end
 
@@ -347,7 +353,7 @@ if (spike_start_idx_by_run~=1)
     error('spike_start_idx_by_run should be 1 but it''s not.')
 end
 
-if (~load_as_temp || force_compute_quality_measures)
+if (~options.load_as_temp || options.force_compute_quality_measures)
     did_quality=true;
     %compute quality measures
     if(~isempty(best_channels_phy_merge))
@@ -383,10 +389,8 @@ end
 
 spike_start_idx_by_run(end+1)=length(spike_assignments)+1;
 
-Kilosort_load_completed_job_params.merge_all=merge_all;
-Kilosort_load_completed_job_params.good_kids=good_kids;
-Kilosort_load_completed_job_params.unit_numbering_offset=unit_numbering_offset;
-Kilosort_load_completed_job_params.force_best_channels_to_one=force_best_channels_to_one;
+Kilosort_load_completed_job_params=options;
+
 if exist(merge_results_file,'file')
     Kilosort_load_completed_job_params.merge_file=merge_results_file;
 else
@@ -416,7 +420,7 @@ gSingleRawFields.unit_type=cell(length(best_channels),1);
 dbopen
 
 gSingleRawFields.unit_start = repmat({0},[length(best_channels),1]);
-if(~load_as_temp)
+if(~options.load_as_temp)
     % purge existing database entries that metadata about these recordings
     rawids = [];
     for run_idx=1:length(job.runs)
@@ -425,14 +429,14 @@ if(~load_as_temp)
         S=mysql(sql);
         rawids(end+1)=S.id;
     end
-    if purge_rawids
+    if options.purge_rawids
         dblink_purge_rawids(rawids);     
     end
     % if append_units, figure out the maximum unit number that already exists
     % on each channel. new units added for these data will be assigned to
     % values starting at maxunit+1
     
-    if append_units
+    if options.append_units
         for ii=1:length(best_channels)
             sql=['SELECT max(unit) as maxunit FROM gSingleCell',...
                 ' WHERE cellid like "',site,'%" AND channum=',num2str(best_channels(ii))];
@@ -454,7 +458,7 @@ for run_idx=1:length(job.runs)
     sql=['SELECT id,parmfile,bad',...
             ' FROM gDataRaw WHERE parmfile =''',job.runs{run_idx},''''];
     S=mysql(sql);
-    if S.bad && ~load_as_temp
+    if S.bad && ~options.load_as_temp
         fprintf('%s marked as bad, skipping\n',job.runs{run_idx});
         continue
     end
@@ -473,7 +477,7 @@ for run_idx=1:length(job.runs)
             ut=nan(size(units));
             ut(ismember(units,sus))=1;
             ut(ismember(units,mus))=2;
-            un=(1:length(units))+unit_numbering_offset;
+            un=(1:length(units))+options.unit_numbering_offset;
             [ut,si]=sort(ut);
             units=units(si);
         else
@@ -504,13 +508,13 @@ for run_idx=1:length(job.runs)
                 s{i}(final_ui,1).sorter=getenv('USER');
             end
             s{i}(final_ui).primary=1;
-            if ~delete_existing_spkfile && append_units
+            if ~options.delete_existing_spkfile && options.append_units
                 s{i}(final_ui).primary=0;
                 % If appending and not deleting, set primary to 0 to keep existing sort indexes
                 % as they are, so database doen't need to be updated because old sorts got moved to sortidx2
             end
             s{i}(final_ui).comments='Sorted by KiloSort, manually curated by phy. Type is: ';
-            if(~isempty(good_kids) && ~any(ismember(ids(units(un_idx)),good_kids)))
+            if(~isempty(options.keep_Kids) && ~any(ismember(ids(units(un_idx)),options.keep_Kids)))
                 ut(j)=2;
             end
             if(ut(j)==1)
@@ -533,7 +537,6 @@ for run_idx=1:length(job.runs)
             s{i}(final_ui).xaxis=[];
             s{i}(final_ui).sortparameters.SaveSorter=0;
             s{i}(final_ui).sortparameters.Kilosort_job_source=job_file;
-            s{i}(final_ui).sortparameters.Kilosort_use_automerge=use_automerge;
             s{i}(final_ui).sortparameters.Kilosort_load_completed_job_params=Kilosort_load_completed_job_params;
             s{i}(final_ui).sortparameters.KiloSort_ids=ids(units(un_idx));
             s{i}(final_ui).mfilename=this_baphy_source;
@@ -601,7 +604,7 @@ for run_idx=1:length(job.runs)
                 end
                 s{i}(final_ui).isolation=gSingleRawFields.isolation{i}(final_ui);
                 
-                if(~isempty(good_kids) && ~any(ismember(ids(units(un_idx)),good_kids)))
+                if(~isempty(options.keep_Kids) && ~any(ismember(ids(units(un_idx)),options.keep_Kids)))
                     gSingleRawFields.isolation{i}(final_ui)=5;
                     s{i}(final_ui).isolation=5;
                 end
@@ -626,12 +629,12 @@ for run_idx=1:length(job.runs)
         end
     end
     
-    if(load_as_temp)
+    if(options.load_as_temp)
         savfile=[fileparts(tempname) filesep job.runs{run_idx}(1:end-2) '.spk.mat'];
     else
         savfile = [job.runs_root filesep 'sorted' filesep job.runs{run_idx}(1:end-2) '.spk.mat'];
     end
-    if(delete_existing_spkfile && exist(savfile,'file'))
+    if(options.delete_existing_spkfile && exist(savfile,'file'))
         file_exists=true;
         while file_exists
             lastwarn('')
@@ -653,7 +656,8 @@ for run_idx=1:length(job.runs)
     extras.npoint=job.nSamplesBlocks(run_idx);
     extras.sweeps=exptparams_{run_idx}.TotalRepetitions;
     fprintf('savespikes.m: Saving spike data to: %s...\n',savfile)
-    format=6; %even if baphy format, use savespikes_do_save format 6 for saves from Kilosort/phy
+    %format=6; %even if baphy format, use savespikes_do_save format 6 for saves from Kilosort/phy
+    format=7; %format 7 means sort_idx is no longer used, length(sortinfo{chan}) should always be 1.
     
     switch job.runinfo(1).evpv
         case 5
@@ -673,7 +677,7 @@ for run_idx=1:length(job.runs)
     
     sortidxs=savespikes_do_save(savfile,s,best_channels,extras,format,rate,nrec);
 
-    if(~load_as_temp)
+    if(~options.load_as_temp)
         % need to talk to the celldb database
         fprintf('Saving to database\n')
         r=dbGetConParms();
@@ -719,7 +723,7 @@ for run_idx=1:length(job.runs)
     savfiles{run_idx}=savfile;
 end
 
-if(~load_as_temp && isempty(strfind(job_file,'completed')))
+if(~options.load_as_temp && isempty(strfind(job_file,'completed')))
     dest=strrep(job_file,'in_progress','completed');
     if ~(exist(dest)==2)
         UTmkdir(dest)

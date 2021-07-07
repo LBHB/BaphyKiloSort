@@ -148,7 +148,7 @@ remove_laser_artifact_sec = getparm(job, 'remove_laser_artifact_sec', 0);
 interp_laser_sec = getparm(job, 'interp_laser_sec', 0);
 if remove_laser_artifact_sec>0
    
-    fprintf('correcting photoelectric artifact')
+    fprintf('correcting photoelectric artifact\n')
     fprintf('removing %.3f sec around on/off\n', ...
             remove_laser_artifact_sec);
     if interp_laser_sec>0
