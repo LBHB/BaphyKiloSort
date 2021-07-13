@@ -158,8 +158,21 @@ if ~isempty(options.remove_Kids)
             fprintf('\n Cancelled')
             return
         end
-        end
+    end
     all_units(ismember(ids(all_units),options.remove_Kids))=[];
+elseif ~isempty(options.keep_Kids)
+    mi = ismember(ids(all_units),options.keep_Kids);
+    if sum(mi) < length(options.keep_Kids)
+        s1=sprintf('%d ', options.keep_Kids);s1(end)=[];
+        s2=sprintf('%d ', ids(all_units)); s2(end)=[];
+        a=questdlg(['Warning! Requested ids to remove (',s1,') not all found in id list (',s2,')'],'Dont''t save ids not found','Continue','Cancel','Cancel');
+        if strcmp(a,'Cancel')
+            savfiles=[];
+            fprintf('\n Cancelled')
+            return
+        end
+    end
+    all_units(~ismember(ids(all_units),options.keep_Kids))=[];
 end
 
 
