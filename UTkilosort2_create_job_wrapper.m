@@ -183,7 +183,7 @@ if 0 % for testing which channel map
 end
 
 if 1
-    job.name=[job.name,'_minfr_goodchannels_to0'];
+    %job.name=[job.name,'_minfr_goodchannels_to0'];
     job.minfr_goodchannels=0;
 end
 
@@ -234,8 +234,6 @@ if 0
     job.name=[job.name,'_Th10_2'];
     job.Th=[10 2];
 end
-
-job.name=[job.name ,'_iNeigh_LASv2'];
 
 job.results_path=[job.runs_root filesep 'tmp' filesep 'KiloSort' filesep  job.name filesep 'results'];
 job.results_path_temp=[job.runs_root filesep 'tmp' filesep 'KiloSort' filesep  job.name filesep 'big'];
