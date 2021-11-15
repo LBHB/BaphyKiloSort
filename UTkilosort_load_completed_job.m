@@ -313,7 +313,7 @@ switch job.runinfo(1).evpv
             resp = questdlg(str,'Old File, fix trial onsets?','run UTkilosort_fix_trial_onsets','use trial onsets in all_channels.events','run UTkilosort_fix_trial_onsets');
             switch resp
                 case 'run UTkilosort_fix_trial_onsets'
-                    job=UTkilosort2_fix_trial_onsets(job_file);
+                    job=UTkilosort2_fix_trial_onsets(job_file,1);
                     trial_onsets_=job.trial_onsets_;
                     runs_per_trial = job.runs_per_trial;                    
                 case 'use trial onsets in all_channels.events'
@@ -459,7 +459,7 @@ if(~options.load_as_temp)
             else
                 gSingleRawFields.unit_start{ii}=0;
             end
-        end   
+        end
     end
 
 end
@@ -687,6 +687,12 @@ for run_idx=1:length(job.runs)
     end
     
     goodtrials=repmat({''},max(cellfun(@length,s)),1); % OR '1:x' OR 'x:y' for excluding trials
+    
+    %if ~isempty(job.bad_trials{run_idx})
+%     if run_idx==5
+%         warning(['Marking trials [',num2str(job.bad_trials{run_idx}),'] bad due to jumps in timestamps'])
+%         goodtrials=repmat({'1:55,58:70'},max(cellfun(@length,s)),1); % OR '1:x' OR 'x:y' for excluding trials
+%     end
     
     sortidxs=savespikes_do_save(savfile,s,best_channels,extras,format,rate,nrec);
 
