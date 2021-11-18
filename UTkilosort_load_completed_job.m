@@ -43,6 +43,7 @@ options.delete_existing_spkfile=getparm(options,'delete_existing_spkfile',option
 options.purge_rawids=getparm(options,'purge_rawids',[]);
 options.remove_Kids=getparm(options,'remove_Kids',[]); %Kid means KiloSort id
 options.keep_Kids=getparm(options,'keep_Kids',[]);
+options.bad_runs=getparm(options,'bad_runs','');% bad_runs='2:6;133:6,8;134:6,8,9;135:12,13'
 
 %Options currently not set by Kilosort_browser
 options.unit_numbering_offset=getparm(options,'unit_numbering_offset',0); %use this to make units 1:3 be units 11:13 (for example if you want to make the unique from other runs)
@@ -64,6 +65,7 @@ for i=1:length(job.runs)
     globalparams_{i}=globalparams;
     exptparams_{i}=exptparams;
     exptevents_{i}=exptevents;
+    run_nums(i)=str2double(job.runs{i}(8:9));
 end
 
 if(options.use_automerge)
@@ -175,6 +177,21 @@ elseif ~isempty(options.keep_Kids)
     all_units(~ismember(ids(all_units),options.keep_Kids))=[];
 end
 
+%Create a cell array, indexed by KID (+1 because these are from python with 0 indexing),
+%  listing bad runs for each KID.
+bad_runs=cell(max(ids)+1,1);
+if ~isempty(options.bad_runs)
+    bad_runs_input = split(options.bad_runs,';');
+    for i=1:length(bad_runs_input)
+        if length(strfind(bad_runs_input{i},':')) ~=1
+            error('Error parsing bad_runs input entry %d (%s). For each unit, the entry should be KSID:bad_run1,bad_run2; For example: 2:6;133:6,8;134:6,8,9;135:12,13',i,bad_runs_input{i})
+        end
+        this_kid_txt = split(bad_runs_input{i},':');
+        KID = str2double(this_kid_txt{1});
+        this_bad_runs = str2num(this_kid_txt{2}); %#ok<ST2NM>
+        bad_runs{KID+1} = this_bad_runs;
+    end
+end
 
 if(isempty(all_units))
     error('No units found, not saving')
@@ -615,6 +632,14 @@ for run_idx=1:length(job.runs)
                     %if manually labeled as a MU, force isolation to be at most 85
                     gSingleRawFields.isolation{i}(final_ui)=min(gSingleRawFields.isolation{i}(final_ui),85);
                 end
+                if any( bad_runs{s{i}(final_ui).ks_clusterID+1} == run_nums(run_idx))
+                    %if the run was marked as bad for this unit, force isolation to be 0
+                    fprintf('Kilosort Id %d (%s Channel %d, Unit %d) marked bad for %s\n',s{i}(final_ui).sortparameters.KiloSort_ids,...
+                        s{i}(final_ui).sortparameters.KiloSort_type,best_channels(i),final_ui,job.runs{run_idx});
+                    gSingleRawFields.isolation{i}(final_ui)=0;
+                    s{i}(final_ui).sortparameters.KiloSort_type = ['marked_bad_this_run_' s{i}(final_ui).sortparameters.KiloSort_type];
+                end
+                    
                 s{i}(final_ui).isolation=gSingleRawFields.isolation{i}(final_ui);
                 
                 if(~isempty(options.keep_Kids) && ~any(ismember(ids(units(un_idx)),options.keep_Kids)))
