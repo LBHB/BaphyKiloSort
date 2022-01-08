@@ -86,6 +86,11 @@ switch dat.globalparams.HWparams.DAQSystem
                 job.chanMap=[SERVER_PATH 'code' filesep 'KiloSort' filesep 'chanMap_' electrode_name '.mat'];
                 job.Nchan=128;
                 job.Nfilt=192;
+            case 'neuropixPhase3A'
+                job.chanMap = [SERVER_PATH 'code' filesep 'KiloSort' filesep 'chanMap_' electrode_name '.mat'];
+                job.Nchan=384;
+                job.Nfilt=192;
+                
             case 'unknown'
                 if runinfo.spike_channels(1)==54 && length(runinfo.spike_channels)==64
                     %channel map for UCLA 64D in Intan headstage slot 1

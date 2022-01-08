@@ -7,6 +7,20 @@ if(isempty(MULTICHANNEL_SORTING_PATH))
  error('MULTICHANNEL_SORTING_PATH is not defined. This should be defined in BaphyConfigPath.')
 end
 do_write=true;
+
+%% Check available memory
+dev=gpuDevice(1);
+freeGB = dev.AvailableMemory/1024/1024/1024;
+totalGB = dev.TotalMemory/1024/1024/1024;
+fprintf('%0.2g/%0.2g GB free on GPU.\n', freeGB,totalGB);
+if freeGB < 3
+    [~, name] = system('hostname'); name(end)=[];
+    status = mysql(['UPDATE tComputer SET maxGPU_jobs=0 WHERE name=''',name,''';']);
+    error(['Not enough memory free, killing job, setting maxGPU_jobs to 0 for ' name ' to stop more sorting jobs from going here.',...
+        ' Run the following in mysql to turn it back on: UPDATE tComputer SET maxGPU_jobs=1 WHERE name=''',name,''';'])
+end
+
+%% Create local copy of data
 status=0;
 job=load(job_file);
 if exist([job.results_path filesep],'dir')
@@ -236,8 +250,16 @@ UTkilosort2_plot_drift(rez,1); % plot drift and save in results file
 
 
 % main tracking and template matching algorithm
-rez = learnAndSolve8b(rez);
-
+try
+    rez = learnAndSolve8b(rez);
+catch err
+    dev=gpuDevice(1);
+    freeGB = dev.AvailableMemory/1024/1024/1024;
+    totalGB = dev.TotalMemory/1024/1024/1024;
+    fprintf('%0.2g/%0.2g GB free on GPU.\n', freeGB,totalGB);
+    fprintf(err)
+    rethrow(err)
+end
 % final merges
 rez = find_merges(rez, 1);
 

@@ -7,6 +7,17 @@ if(isempty(MULTICHANNEL_SORTING_PATH))
  error('MULTICHANNEL_SORTING_PATH is not defined. This should be defined in BaphyConfigPath.')
 end
 do_write=true;
+
+%% Check available memory
+dev=gpuDevice(1);
+freeGB = dev.AvailableMemory/1024/1024/1024;
+totalGB = dev.TotalMemory/1024/1024/1024;
+fprintf('%0.2g/%0.2g GB free on GPU.\n', freeGB,totalGB);
+if freeGB < 3
+    error('Not enough memory free, killing job.')
+end
+
+%% Create local copy of data
 status=0;
 job=load(job_file);
 if exist([job.results_path filesep],'dir')
@@ -181,8 +192,16 @@ end
 iseed = 1;
 
 % main tracking and template matching algorithm
-rez = learnAndSolve8b(rez,iseed);
-
+try
+    rez = learnAndSolve8b(rez,iseed);
+catch err
+    dev=gpuDevice(1);
+    freeGB = dev.AvailableMemory/1024/1024/1024;
+    totalGB = dev.TotalMemory/1024/1024/1024;
+    fprintf('%0.2g/%0.2g GB free on GPU.\n', freeGB,totalGB);
+    fprintf(err)
+    rethrow(err)
+end
 % OPTIONAL: remove double-counted spikes - solves issue in which individual spikes are assigned to multiple templates.
 % See issue 29: https://github.com/MouseLand/Kilosort/issues/29
 rez = remove_ks2_duplicate_spikes(rez);
