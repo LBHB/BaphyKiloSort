@@ -89,7 +89,7 @@ switch dat.globalparams.HWparams.DAQSystem
             case 'neuropixPhase3A'
                 job.chanMap = [SERVER_PATH 'code' filesep 'KiloSort' filesep 'chanMap_' electrode_name '.mat'];
                 job.Nchan=384;
-                job.Nfilt=192;
+                job.Nfilt=384;
                 
             case 'unknown'
                 if runinfo.spike_channels(1)==54 && length(runinfo.spike_channels)==64
@@ -243,7 +243,6 @@ end
 job.results_path=[job.runs_root filesep 'tmp' filesep 'KiloSort' filesep  job.name filesep 'results'];
 job.results_path_temp=[job.runs_root filesep 'tmp' filesep 'KiloSort' filesep  job.name filesep 'big'];
 job.fbinary=[job.results_path_temp filesep 'binary.dat'];% will be created for 'openEphys'
-job.fproc=[job.results_path_temp filesep 'temp_wh.dat'];% residual from RAM of preprocessed data
 job.status=0; %0: not started, 1:sorted, 2: manually analyzed, 3: completed
 
 fn=[KSpaths.jobs_path filesep 'in_progress' filesep job.name '.mat'];

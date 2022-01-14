@@ -2,7 +2,7 @@ function status=UTkilosort2_run_job(job_file)
 % status=UTkilosort_run_job(job_file)
     %runs kilosort using input parameters located in job_file.
     %puts results in job.results_path and [job.results_path,'_after_automerge'] 
-global MULTICHANNEL_SORTING_PATH
+global MULTICHANNEL_SORTING_PATH BAPHYDATAROOT LOCAL_DATA_ROOT
 if(isempty(MULTICHANNEL_SORTING_PATH))
  error('MULTICHANNEL_SORTING_PATH is not defined. This should be defined in BaphyConfigPath.')
 end
@@ -67,20 +67,35 @@ for i=1:length(job.runs)
     job.StartTime_re_Run1(i)=etime(job.StartTime(i,:),job.StartTime(1,:));
 end
 
-UTmkdir(job.fbinary)
+
+
 UTmkdir(job.results_path);
-[w,s]=unix(['chmod 777 ', job.results_path]);
-if w, error(s), end
+[w,s]=unix(['chmod 777 ', job.results_path]); if w, error(s), end
+
+
+% creates a local binary file and "swap" to expedite procecing. 
+% Stores e the server binary location for later recovery.
+job.fbinary_server = job.fbinary;
+job.fbinary = strrep(job.fbinary, BAPHYDATAROOT, LOCAL_DATA_ROOT);
+job.fproc=[fileparts(job.fbinary) filesep 'temp_wh.dat'];% "swap" or RAM replacement
+
+UTmkdir(fileparts(job.fbinary)); % this should create folder for fproc too
+UTmkdir(fileparts(job.fbinary_server));
+
+% anarchy permissions.
+[w,s]=unix(['chmod 777 ',fileparts(job.fbinary)]); if w, warning(s), end
+[w,s]=unix(['chmod 777 ',fileparts(job.fbinary_server)]); if w, warning(s), end
+
 % related with Luke drift correction, does it intervene in something else?
 % todo: delete
 %if job.keep_fproc
 %    job.ForceMaxRAMforDat = 0;
 %end
 
-%% you need to change most of the paths in this block
-% Kilosort2 master start. MLE.
+%% Kilosort2 master start. MLE.
 
 addpath(genpath([MULTICHANNEL_SORTING_PATH, 'KiloSort2'])) % path to kilosort folder
+addpath(genpath([MULTICHANNEL_SORTING_PATH, 'open-ephys-matlab-tools'])) % perhaps this has all what we need! MLE
 rmpath(genpath([MULTICHANNEL_SORTING_PATH, 'KiloSort2' filesep 'CUDA'])) % path to kilosort folder
 if ~verLessThan('matlab', '9.8')%2020a
     addpath([MULTICHANNEL_SORTING_PATH, 'KiloSort2' filesep 'CUDA' filesep 'MATLAB2020'])
@@ -96,12 +111,18 @@ addpath([MULTICHANNEL_SORTING_PATH, 'npy-matlab']) % path to npy-matlab
 
 switch job.datatype
     case 'Open-Ephys'
-        job = convertOpenEphysToRawBInary(job);
+        % old OPE hav speciale format, new OEP are binary files
+        if strcmp(job.runinfo(1).datatype, 'binary')
+            job = concatenateOpenEphysBinary(job);
+        else
+            job = convertOpenEphysToRawBInary(job);
+        end
         % transforms the channel map form file to struct and sets into 1
         % indexing, savese the channelMap directory for cleaning up
         job.chanMapDir = job.chanMap;
         job.chanMap = load(job.chanMap);
         job.chanMap.chanMap = job.chanMap_KiloRaw;
+        
     case 'MANTA'
         job = convertMANTAToRawBinary(job,do_write);  % convert data, only for MANTA
         job.chanMap = chanMap;   
@@ -123,16 +144,30 @@ switch job.runinfo(1).evpv
             not_filesep=setdiff({'/','\'},filesep);not_filesep=not_filesep{1};
             globalparams_{i}.rawfilename=strrep(globalparams_{i}.rawfilename,not_filesep,filesep);
             
-            [~, EVinfo(i),EVtimestamps{i}] = load_open_ephys_data_faster([globalparams_{i}.rawfilename,filesep,'all_channels.events']);
-            sampleRate(i)=EVinfo(i).header.sampleRate;
-            recording_startO(i)=EVtimestamps{i}(1);
+            if strcmp(job.runinfo(i).datatype, 'binary')
+                %Get trial onsets from events in continuous folder
+                EVdata = load_open_ephys_binary(job.runinfo(i).json_file,'events',job.runinfo(i).event_ind_TTL);
+                sampleRate(i) = EVdata.Header.sample_rate;
+                job.recording_start(i) = EVdata.Timestamps(1);
+                
+                % onsets in samples from the recording start
+                trial_onsets_{i}=(EVdata.Timestamps(EVdata.Data==1) - ...
+                                  job.recording_start(i)+1)' + ...
+                                  sum(job.nSamplesBlocks(1:i-1)); 
+               
+            else
+                [~, EVinfo(i),EVtimestamps{i}] = load_open_ephys_data_faster([globalparams_{i}.rawfilename,filesep,'all_channels.events']);
+                sampleRate(i)=EVinfo(i).header.sampleRate;
+                %recording_startO(i)=EVtimestamps{i}(1);
 
-            data_files=dir([job.root{i},filesep,'*.continuous']);
-            [~, EVinfo_(i)] = load_open_ephys_data_faster([job.root{i},filesep,data_files(1).name],0);
-            job.recording_start(i)=EVinfo_(i).ts(1);
-            
-            trial_onsets_{i}=(EVtimestamps{i}(EVinfo(i).eventId==1&EVinfo(i).eventType==3)-job.recording_start(i)+1)'+sum(job.nSamplesBlocks(1:i-1)); % in samples re run start
-            trial_onsets_O{i}=(EVtimestamps{i}(EVinfo(i).eventId==1&EVinfo(i).eventType==3)-recording_startO(i)+1)'+sum(job.nSamplesBlocks(1:i-1)); % in samples re run start
+                data_files=dir([job.root{i},filesep,'*.continuous']);
+                [~, EVinfo_(i)] = load_open_ephys_data_faster([job.root{i},filesep,data_files(1).name],0);
+                job.recording_start(i)=EVinfo_(i).ts(1);
+
+                trial_onsets_{i}=(EVtimestamps{i}(EVinfo(i).eventId==1&EVinfo(i).eventType==3)-job.recording_start(i)+1)'+sum(job.nSamplesBlocks(1:i-1)); % in samples re run start
+                %trial_onsets_O{i}=(EVtimestamps{i}(EVinfo(i).eventId==1&EVinfo(i).eventType==3)-recording_startO(i)+1)'+sum(job.nSamplesBlocks(1:i-1)); % in samples re run start
+
+            end
             
             silence_between_stimuli=exptparams.TrialObject.ReferenceHandle.PreStimSilence+exptparams.TrialObject.ReferenceHandle.PostStimSilence;
             if (silence_between_stimuli-time_re_sound_target)>=min_offset_gap
@@ -144,7 +179,6 @@ switch job.runinfo(1).evpv
                     time_re_sound=.05;
                 end
             end
-            %trial_offsets=EVtimestamps(EVinfo.eventId==0&EVinfo.eventType==3)-recording_start+1; % in samples re recording start
             runs_per_trial(i)=length(trial_onsets_{i});
         end
 end
@@ -173,7 +207,13 @@ if remove_laser_artifact_sec>0
     % need to get experiments with laser stim and  events to figure out 
     % when laser was turned on/off, so supply baphy events file
     ncorr = 0;
+    [tmp pid] = system('pgrep MATLAB');
     for j=1:length(job.runs)
+        
+        
+        [tmp mem_usage] = system(['cat /proc/' strtrim(pid) '/status | grep VmData']);
+        fprintf("prior loading %i MB\n", round(str2num(strtrim(extractAfter(extractBefore(mem_usage, ' kB'), ':'))) / 1000));
+
         
         parmfile = fullfile(job.runs_root, job.runs{j});
         parmout = LoadMFile(parmfile);
@@ -192,10 +232,15 @@ if remove_laser_artifact_sec>0
         
         % reads from the big binary file, the chunk corresponding to the
         % experiment block
-        fbin = fopen(job.fbinary, 'r+');  
+        fid = fopen(job.fbinary, 'r+');  
         offset = job.Nchan * sum(job.nSamplesBlocks(1:j-1)) * 2;
-        fseek(fbin, offset, 'bof');
-        all_samples = fread(fbin, [job.Nchan, job.nSamplesBlocks(j)], 'int16');
+        fseek(fid, offset, 'bof');
+        all_samples = fread(fid, [job.Nchan, job.nSamplesBlocks(j)], 'int16');
+        
+
+        [tmp mem_usage] = system(['cat /proc/' strtrim(pid) '/status | grep VmData']);
+        fprintf("after loading %i MB\n", round(str2num(strtrim(extractAfter(extractBefore(mem_usage, ' kB'), ':'))) / 1000));
+
         
         for chan = 1:size(all_samples,1)
           tc = all_samples(chan,:)';
@@ -207,10 +252,15 @@ if remove_laser_artifact_sec>0
         end
         
         % writes back to the same file location
-        fseek(fbin, offset, 'bof');
-        fwrite(fbin, all_samples, 'int16');
-        fclose(fbin);
+        fseek(fid, offset, 'bof');
+        fwrite(fid, all_samples, 'int16');
+        fclose(fid);
         clear('all_samples');
+
+        
+        [tmp mem_usage] = system(['cat /proc/' strtrim(pid) '/status | grep VmData']);
+        fprintf("after clearing %i MB\n", round(str2num(strtrim(extractAfter(extractBefore(mem_usage, ' kB'), ':'))) / 1000));
+
     end
     if ncorr > 0
         fprintf('done correcting photoelectric artifact, ')
@@ -235,10 +285,10 @@ rootZ = job.results_path_temp;
 fprintf('Looking for data inside %s \n', rootZ)
 
 % is there a channel map file in this folder?
-fs = dir(fullfile(rootZ, 'chan*.mat'));
-if 0 %~isempty(fs) && ~isfield(job, 'chanMap')
-    job.chanMap = fullfile(rootZ, fs(1).name);
-end
+% fs = dir(fullfile(rootZ, 'chan*.mat'));
+% if ~isempty(fs) && ~isfield(job, 'chanMap')
+%     job.chanMap = fullfile(rootZ, fs(1).name);
+% end
 
 % preprocess data to create temp_wh.dat
 rez = preprocessDataSub(job);
@@ -276,36 +326,41 @@ fprintf('found %d good units \n', sum(rez.good>0))
 
 
 %% LBHB save results to phy (MLE)
+% copy binary to server and restablis pointer to files
+[w,s]=unix(['cp ', job.fbinary, ' ', job.fbinary_server]); if w, warning(s), end
+job.fbinary = job.fbinary_server;
+job = rmfield(job, 'fbinary_server');
+
 fprintf('Saving results to Phy in %s  \n', job.results_path)
 rezToPhy(rez, job.results_path);
 % save([job.results_path_temp filesep 'rez.mat'],'-Struct','rez', '-v7.3');
 % fprintf('Kilosort took %2.2f seconds\n', toc)
 
 %% if you want to save the results to a Matlab file... 
+if 0
+    % discard features in final rez file (too slow to save)
+    rez.cProj = [];
+    rez.cProjPC = [];
 
-% discard features in final rez file (too slow to save)
-rez.cProj = [];
-rez.cProjPC = [];
-
-% transforms GPU arrays into normal arrays
-fn=fieldnames(rez);
-for i=1:length(fn)
-    if isa(rez.(fn{i}),'gpuArray')
-        rez.(fn{i})=gather_try(rez.(fn{i}));
+    % transforms GPU arrays into normal arrays
+    fn=fieldnames(rez);
+    for i=1:length(fn)
+        if isa(rez.(fn{i}),'gpuArray')
+            rez.(fn{i})=gather_try(rez.(fn{i}));
+        end
     end
-end
-fn=fieldnames(rez.ops);
-for i=1:length(fn)
-    if isa(rez.ops.(fn{i}),'gpuArray')
-        rez.ops.(fn{i})=gather_try(rez.ops.(fn{i}));
+    fn=fieldnames(rez.ops);
+    for i=1:length(fn)
+        if isa(rez.ops.(fn{i}),'gpuArray')
+            rez.ops.(fn{i})=gather_try(rez.ops.(fn{i}));
+        end
     end
+
+    % save final results as rez2
+    fname = [job.results_path_temp filesep 'rez.mat'];
+    fprintf('Saving final results in %s  \n', fname);
+    save(fname,'-Struct', 'rez', '-v7.3');
 end
-
-% save final results as rez2
-fname = [job.results_path_temp filesep 'rez.mat'];
-fprintf('Saving final results in %s  \n', fname);
-save(fname,'-Struct', 'rez', '-v7.3');
-
 % Kilosort2 master end. MLE
 %% save and clean up
 
