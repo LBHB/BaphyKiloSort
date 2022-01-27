@@ -291,7 +291,7 @@ spiketimes=rez.st3(:,1);
 %spikeTemplates = uint32(rez.st3(:,2));
 spike_assignments=clusts;
 
-best_channel=zeros(length(all_units),1,'int8');
+best_channel=zeros(length(all_units),1);
 was_split=false(length(all_units),1);
 was_merged=false(length(all_units),1);
 for i=1:length(all_units)
@@ -357,6 +357,7 @@ trial_onsets=[trial_onsets_{:}];
 
 run_starts=[1 cumsum(runs_per_trial)+1];
 trial_onsets(end+1)=inf; %add inf to store any spikes after last trial at end of last trial
+
 spike_start_idx_by_run=nan(size(runs_per_trial));
 for trialidx=1:length(trial_onsets)-1
     idx=find(spiketimes>=trial_onsets(trialidx) & spiketimes<trial_onsets(trialidx+1));
@@ -366,7 +367,7 @@ for trialidx=1:length(trial_onsets)-1
     end
     trialidx_per_run=trialidx-sum(runs_per_trial(1:this_run-1));
     spiketimes_by_trial(1,idx)=trialidx_per_run;
-    spiketimes_by_trial(2,idx)=spiketimes(idx)-trial_onsets(trialidx)+1;
+    spiketimes_by_trial(2,idx)=spiketimes(idx)-double(trial_onsets(trialidx)+1);
 end
 
 nan_spiketimes_by_trial=find(isnan(spiketimes_by_trial(1,:)));

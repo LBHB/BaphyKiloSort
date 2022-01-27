@@ -75,16 +75,30 @@ UTmkdir(job.results_path);
 
 % creates a local binary file and "swap" to expedite procecing. 
 % Stores e the server binary location for later recovery.
+% todo figure out a more streamline way of passing these paths
 job.fbinary_server = job.fbinary;
-job.fbinary = strrep(job.fbinary, BAPHYDATAROOT, LOCAL_DATA_ROOT);
-job.fproc=[fileparts(job.fbinary) filesep 'temp_wh.dat'];% "swap" or RAM replacement
+job.results_path_server = job.results_path;
+job.results_path_temp_server = job.results_path_temp;
+
+% alternate KiloSort local working directory
+job.fbinary =  strrep(job.fbinary, BAPHYDATAROOT, '/KiloSort/');
+job.results_path = strrep(job.results_path, BAPHYDATAROOT, '/KiloSort/');
+job.results_path_temp = strrep(job.results_path_temp, BAPHYDATAROOT, '/KiloSort/');
+
+job.fproc = [job.results_path_temp filesep 'temp_wh.dat'];
+
+
 
 UTmkdir(fileparts(job.fbinary)); % this should create folder for fproc too
 UTmkdir(fileparts(job.fbinary_server));
 
+UTmkdir([job.results_path filesep])
+
 % anarchy permissions.
 [w,s]=unix(['chmod 777 ',fileparts(job.fbinary)]); if w, warning(s), end
 [w,s]=unix(['chmod 777 ',fileparts(job.fbinary_server)]); if w, warning(s), end
+
+[w,s]=unix(['chmod 777 ',job.results_path]);if w, error(s), end
 
 % related with Luke drift correction, does it intervene in something else?
 % todo: delete
@@ -147,8 +161,11 @@ switch job.runinfo(1).evpv
             if strcmp(job.runinfo(i).datatype, 'binary')
                 %Get trial onsets from events in continuous folder
                 EVdata = load_open_ephys_binary(job.runinfo(i).json_file,'events',job.runinfo(i).event_ind_TTL);
-                sampleRate(i) = EVdata.Header.sample_rate;
-                job.recording_start(i) = EVdata.Timestamps(1);
+                sampleRate(i)=EVdata.Header.sample_rate;
+                
+                loc_json = strrep(job.runinfo(i).json_file, BAPHYDATAROOT, LOCAL_DATA_ROOT);
+                continuous_data = load_open_ephys_binary(loc_json,'continuous',job.runinfo(i).data_ind,'mmap');
+                job.recording_start(i) = continuous_data.Timestamps(1);
                 
                 % onsets in samples from the recording start
                 trial_onsets_{i}=(EVdata.Timestamps(EVdata.Data==1) - ...
@@ -208,12 +225,8 @@ if remove_laser_artifact_sec>0
     % when laser was turned on/off, so supply baphy events file
     ncorr = 0;
     [tmp pid] = system('pgrep MATLAB');
+    fid = fopen(job.fbinary, 'r+'); 
     for j=1:length(job.runs)
-        
-        
-        [tmp mem_usage] = system(['cat /proc/' strtrim(pid) '/status | grep VmData']);
-        fprintf("prior loading %i MB\n", round(str2num(strtrim(extractAfter(extractBefore(mem_usage, ' kB'), ':'))) / 1000));
-
         
         parmfile = fullfile(job.runs_root, job.runs{j});
         parmout = LoadMFile(parmfile);
@@ -230,38 +243,63 @@ if remove_laser_artifact_sec>0
                
         spikefs = job.fs;
         
-        % reads from the big binary file, the chunk corresponding to the
-        % experiment block
-        fid = fopen(job.fbinary, 'r+');  
-        offset = job.Nchan * sum(job.nSamplesBlocks(1:j-1)) * 2;
-        fseek(fid, offset, 'bof');
-        all_samples = fread(fid, [job.Nchan, job.nSamplesBlocks(j)], 'int16');
-        
+        file_offset = job.NchanTOT * sum(job.nSamplesBlocks(1:j-1)) * 2;
 
-        [tmp mem_usage] = system(['cat /proc/' strtrim(pid) '/status | grep VmData']);
-        fprintf("after loading %i MB\n", round(str2num(strtrim(extractAfter(extractBefore(mem_usage, ' kB'), ':'))) / 1000));
+        % loads a chunk of channels at a time for efficient disk IO and
+        % memory use. More channels might increase speed but also ram usage
+        nchans_chunk = 64;
+        nchans_done = 0;
+        while nchans_done < job.NchanTOT
+            fprintf('loading chunk starting on chan: %d ', nchans_done + 1);
+            tic
+            nchans_todo = min(nchans_chunk, job.NchanTOT - nchans_done);
+                
+            chunk_offset = file_offset + nchans_done * 2;
+            fseek(fid, chunk_offset, 'bof');
 
-        
-        for chan = 1:size(all_samples,1)
-          tc = all_samples(chan,:)';
-          tc_out = remove_opto_artifacts(tc,...
-             job.trial_onsets_{j} -sum(job.nSamplesBlocks(1:j-1)),...
-             spikefs, exptparams, exptevents, ...
-             remove_laser_artifact_sec, interp_laser_sec);
-          all_samples(chan,:) = int16(tc_out)';
-        end
-        
-        % writes back to the same file location
-        fseek(fid, offset, 'bof');
-        fwrite(fid, all_samples, 'int16');
-        fclose(fid);
-        clear('all_samples');
+            skip_bytes = (job.NchanTOT - nchans_todo) * 2;
+            chunk_samples = fread(fid, [nchans_todo, job.nSamplesBlocks(j)],...
+                                  sprintf('%d*int16',nchans_todo), skip_bytes);
+            
+            [tmp mem_usage] = system(['cat /proc/' strtrim(pid) '/status | grep VmData']);
+            fprintf("memory usage after loading %i MB\n ", round(str2num(strtrim(extractAfter(extractBefore(mem_usage, ' kB'), ':'))) / 1000));
+            toc    
 
-        
-        [tmp mem_usage] = system(['cat /proc/' strtrim(pid) '/status | grep VmData']);
-        fprintf("after clearing %i MB\n", round(str2num(strtrim(extractAfter(extractBefore(mem_usage, ' kB'), ':'))) / 1000));
+            %for chan = 1:job.Nchan
+            for chan = 1:size(chunk_samples, 1)
+                
+                current_chan = nchans_done + chan;                              
+                %fprintf('removing artifact from channel: %d\n', current_chan);
+                
+                tc = chunk_samples(chan,:)';
 
+                if ismember(current_chan, [1, floor(job.NchanTOT/2), job.NchanTOT])
+                    verbose = true;
+                else
+                    verbose = false;
+                end
+                
+                tc_out = remove_opto_artifacts(tc,...
+                    job.trial_onsets_{j} -sum(job.nSamplesBlocks(1:j-1)),...
+                    spikefs, exptparams, exptevents, ...
+                    remove_laser_artifact_sec, interp_laser_sec, ...
+                    verbose);
+  
+                chunk_samples(chan,:) = int16(tc_out);
+            end
+            
+            fprintf('writing chunk starting on chan: %d\n, ', nchans_done + 1);
+            fseek(fid, chunk_offset, 'bof');
+            fwrite(fid, chunk_samples,...
+                   sprintf('%d*int16',nchans_todo), skip_bytes);
+            clear('chunk_samples');
+            
+            toc
+            nchans_done = nchans_done + nchans_todo;
+        end 
     end
+    fclose(fid);
+    
     if ncorr > 0
         fprintf('done correcting photoelectric artifact, ')
     else
@@ -278,17 +316,8 @@ blocksizes=job.nSamplesBlocks;
 blockstarts=job.StartTime_re_Run1*job.chanMap.fs;
 % actual saving below because rezToPhy deletes files
 
-% the binary file is in this folder
-rootZ = job.results_path_temp;
-
 %% this block runs all the steps of the algorithm
-fprintf('Looking for data inside %s \n', rootZ)
-
-% is there a channel map file in this folder?
-% fs = dir(fullfile(rootZ, 'chan*.mat'));
-% if ~isempty(fs) && ~isfield(job, 'chanMap')
-%     job.chanMap = fullfile(rootZ, fs(1).name);
-% end
+fprintf('Looking for data inside %s \n', job.fbinary)
 
 % preprocess data to create temp_wh.dat
 rez = preprocessDataSub(job);
@@ -296,8 +325,6 @@ rez = preprocessDataSub(job);
 % time-reordering as a function of drift
 rez = clusterSingleBatches(rez);
 UTkilosort2_plot_drift(rez,1); % plot drift and save in results file
-%save(fullfile(rootZ, 'rez.mat'), 'rez', '-v7.3');
-
 
 % main tracking and template matching algorithm
 try
@@ -324,20 +351,15 @@ rez = set_cutoff(rez);
 
 fprintf('found %d good units \n', sum(rez.good>0))
 
+%% save results in .npy for phy and in .mat for baphy remote
 
-%% LBHB save results to phy (MLE)
-% copy binary to server and restablis pointer to files
-[w,s]=unix(['cp ', job.fbinary, ' ', job.fbinary_server]); if w, warning(s), end
-job.fbinary = job.fbinary_server;
-job = rmfield(job, 'fbinary_server');
-
-fprintf('Saving results to Phy in %s  \n', job.results_path)
+% python, the superior language
+fprintf('Localy saving results to Phy in %s  \n', job.results_path)
 rezToPhy(rez, job.results_path);
-% save([job.results_path_temp filesep 'rez.mat'],'-Struct','rez', '-v7.3');
-% fprintf('Kilosort took %2.2f seconds\n', toc)
 
-%% if you want to save the results to a Matlab file... 
-if 0
+
+% matlab... that other language 
+if 1
     % discard features in final rez file (too slow to save)
     rez.cProj = [];
     rez.cProjPC = [];
@@ -361,6 +383,22 @@ if 0
     fprintf('Saving final results in %s  \n', fname);
     save(fname,'-Struct', 'rez', '-v7.3');
 end
+
+
+%% Copy relevant files to server, may be best handled elsewhere
+
+fprintf('Copying local proceced binary to server at %s  \n', job.fbinary_server)
+tic
+[w,s]=unix(['cp ', job.fbinary, ' ', job.fbinary_server]); if w, warning(s), end
+toc
+
+% no need to recorve server locations just jet. Phy curation must happen in
+% th same machine used for sorting
+
+% job.fbinary = job.fbinary_server;
+% rez.ops.fbinary = job.fbinary;
+% job = rmfield(job, 'fbinary_server');
+
 % Kilosort2 master end. MLE
 %% save and clean up
 
@@ -370,8 +408,6 @@ writeNPY(blockstarts,[job.results_path,filesep,'blockstarts.npy']);
 
 %give everyone permission to do everything. Anarchy, whooo!
 [w,s]=unix(['chmod -R 777 ',job.results_path]);if w, error(s), end
-% no automerge needed with KS2
-%[w,s]=unix(['chmod -R 777 ',job.results_path,'_after_automerge']);if w, error(s), end
 [w,s]=unix(['chmod -R 777 ',job.results_path_temp]);if w, error(s), end
 
 % re-establish chanMap to default i.e. path.
