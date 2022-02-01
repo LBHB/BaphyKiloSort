@@ -20,21 +20,28 @@ if freeGB < 3
         ' Run the following in mysql to turn it back on: UPDATE tComputer SET maxGPU_jobs=1 WHERE name=''',name,''';'])
 end
 
-%% Create local copy of data
+%% loads job and creates (deprecated) folders
 status=0;
 job=load(job_file);
-if exist([job.results_path filesep],'dir')
-    [s,m,mid]=rmdir([job.results_path filesep], 's');
-    if ~s, error(m), end
-end
-UTmkdir([job.results_path filesep])
-[w,s]=unix(['chmod 777 ',job.results_path]);if w, error(s), end
-slashes=strfind(job.results_path,filesep);
-for sli=0:1
-    [w,s]=unix(['chmod 777 ',job.results_path(1:slashes(end-sli))]);if w, warning(s), end
-end
-UTmkdir([job.results_path_temp filesep])
-[w,s]=unix(['chmod 777 ',job.results_path_temp]);if w, error(s), end
+
+% todo what are the consequencese of moving this dir making elsewhere??
+% trying to do it in UTKilosort_load_completed_job at the very end
+
+% if exist([job.results_path filesep],'dir')
+%     [s,m,mid]=rmdir([job.results_path filesep], 's');
+%     if ~s, error(m), end
+% end
+% UTmkdir([job.results_path filesep])
+% [w,s]=unix(['chmod 777 ',job.results_path]);if w, error(s), end
+% slashes=strfind(job.results_path,filesep);
+% for sli=0:1
+%     [w,s]=unix(['chmod 777 ',job.results_path(1:slashes(end-sli))]);if w, warning(s), end
+% end
+% UTmkdir([job.results_path_temp filesep])
+% [w,s]=unix(['chmod 777 ',job.results_path_temp]);if w, error(s), end
+
+%% Create local copy of data
+
 for i=1:length(job.runs)
     LoadMFile([job.runs_root filesep job.runs{i}]);
     globalparams_{i}=globalparams;
@@ -67,20 +74,14 @@ for i=1:length(job.runs)
     job.StartTime_re_Run1(i)=etime(job.StartTime(i,:),job.StartTime(1,:));
 end
 
+%% creates all the local relevant directories, saving the location of server counterpart
 
-
-UTmkdir(job.results_path);
-[w,s]=unix(['chmod 777 ', job.results_path]); if w, error(s), end
-
-
-% creates a local binary file and "swap" to expedite procecing. 
-% Stores e the server binary location for later recovery.
 % todo figure out a more streamline way of passing these paths
 job.fbinary_server = job.fbinary;
 job.results_path_server = job.results_path;
 job.results_path_temp_server = job.results_path_temp;
 
-% alternate KiloSort local working directory
+
 job.fbinary =  strrep(job.fbinary, BAPHYDATAROOT, '/KiloSort/');
 job.results_path = strrep(job.results_path, BAPHYDATAROOT, '/KiloSort/');
 job.results_path_temp = strrep(job.results_path_temp, BAPHYDATAROOT, '/KiloSort/');
@@ -92,19 +93,19 @@ job.fproc = [job.results_path_temp filesep 'temp_wh.dat'];
 UTmkdir(fileparts(job.fbinary)); % this should create folder for fproc too
 UTmkdir(fileparts(job.fbinary_server));
 
+
+if exist([job.results_path filesep],'dir')
+    [s,m,mid]=rmdir([job.results_path filesep], 's');
+    if ~s, error(m), end
+end
 UTmkdir([job.results_path filesep])
+
 
 % anarchy permissions.
 [w,s]=unix(['chmod 777 ',fileparts(job.fbinary)]); if w, warning(s), end
 [w,s]=unix(['chmod 777 ',fileparts(job.fbinary_server)]); if w, warning(s), end
-
 [w,s]=unix(['chmod 777 ',job.results_path]);if w, error(s), end
 
-% related with Luke drift correction, does it intervene in something else?
-% todo: delete
-%if job.keep_fproc
-%    job.ForceMaxRAMforDat = 0;
-%end
 
 %% Kilosort2 master start. MLE.
 
@@ -385,19 +386,10 @@ if 1
 end
 
 
-%% Copy relevant files to server, may be best handled elsewhere
+[~, sorting_computer] = system('hostname');
 
-fprintf('Copying local proceced binary to server at %s  \n', job.fbinary_server)
-tic
-[w,s]=unix(['cp ', job.fbinary, ' ', job.fbinary_server]); if w, warning(s), end
-toc
+job.sorting_compute = strtrim(sorting_computer);
 
-% no need to recorve server locations just jet. Phy curation must happen in
-% th same machine used for sorting
-
-% job.fbinary = job.fbinary_server;
-% rez.ops.fbinary = job.fbinary;
-% job = rmfield(job, 'fbinary_server');
 
 % Kilosort2 master end. MLE
 %% save and clean up

@@ -231,14 +231,12 @@ for i = 1:length(all_files)
     wft_struct.(field) = value;
 end
 if ~(isempty(fieldnames(wft_struct))) && isfield(wft_struct, 'wft_mwf')
-    wft_struct = rmfield(wft_struct,'wft_mwf');  % no need to save mean waveform
+    wft_struct = rmfield(wft_struct,'wft_mwf');  % no need to  mean waveform
 end
 
 % will use later to define cellids
 fparts = strsplit(job.results_path, filesep);
-site = fparts(9);
-site = site{1};
-site = site(1:7);
+site = fparts{end-1}(1:7);
 
 merge_results_file=[job.results_path,suffix,filesep,'cluster_names.ts'];
 if ~options.append_units && (exist(merge_results_file,'file'))
@@ -768,12 +766,52 @@ for run_idx=1:length(job.runs)
     savfiles{run_idx}=savfile;
 end
 
+% move job file from  in progress to completed folder
 if(~options.load_as_temp && isempty(strfind(job_file,'completed')))
     dest=strrep(job_file,'in_progress','completed');
     if ~(exist(dest)==2)
         UTmkdir(dest)
         movefile(job_file,dest)
     end
+end
+
+% Copies over the results file from the local folder to the server one
+if(~options.load_as_temp && isfield(job, 'results_path_server'))
+    
+    if exist([job.results_path_server filesep],'dir')
+        [s,m,mid]=rmdir([job.results_path_server filesep], 's');
+        if ~s, error(m), end
+    end
+    UTmkdir([job.results_path_server filesep])
+    [w,s]=unix(['chmod 777 ',job.results_path_server]);if w, error(s), end
+    slashes=strfind(job.results_path_server,filesep);
+    
+    for sli=0:1
+        [w,s]=unix(['chmod 777 ',job.results_path_server(1:slashes(end-sli))]);if w, warning(s), end
+    end
+    UTmkdir([job.results_path_temp_server filesep])
+    [w,s]=unix(['chmod 777 ',job.results_path_temp_server]);if w, error(s), end
+    
+    fprintf('Copying local proceced binary to server at %s  \n', job.fbinary_server)
+    tic
+    [w,s]=unix(['cp -u ', job.fbinary, ' ', job.fbinary_server]); if w, warning(s), end
+    toc
+    
+    fprintf('Copying local proceced rez to server at %s  \n', job.fbinary_server)
+    tic
+    [w,s]=unix(['cp -u ', [job.results_path_temp filesep 'rez.mat'], ' ' ,...
+                job.results_path_temp_server]); if w, warning(s), end
+    toc
+
+    % no need to recorve server locations just jet. Phy curation must happen in
+    % the same machine used for sorting
+
+    % job.fbinary = job.fbinary_server;
+    % rez.ops.fbinary = job.fbinary;
+    % job = rmfield(job, 'fbinary_server');
+    
+else
+    fprintf('skipping transfer of big files to server, no destination specified')
 end
 
 end
