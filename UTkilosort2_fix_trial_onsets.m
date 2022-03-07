@@ -1,5 +1,10 @@
 function job=UTkilosort2_fix_trial_onsets(job_file, do_save)
-
+% Calculate trial_onsets, the indexes of trial onsets in the continuous data file
+% These are cumulative re the start of the concatenated data to be fed into
+% KiloSort, so for the 2nd run, the length of the first run is added, etc.
+% Timestamps are calculated by finding matches in TTL indicies from all_channels.events and timestamps of continuous data from *.continuous
+%
+% 
 job=load(job_file);
 if strcmp(job.datatype,'MANTA')
     fprintf('\nMANTA job, not doing anything')

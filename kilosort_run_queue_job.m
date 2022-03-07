@@ -1,9 +1,20 @@
-function UTkilosort2_create_job_wrapper(options)
+function kilosort_run_queue_job(parmfile)
 
 %script for creating KiloSort jobs and adding them to the jobs folder
 global BAPHYDATAROOT SERVER_PATH
 if(isempty(BAPHYDATAROOT))
     baphy_set_path
+end
+
+[pp,bb,ee]=fileparts(parmfile);
+if strcmpi(ee,'.json')
+   fid = fopen(parmfile); 
+   raw = fread(fid,inf); 
+   str = char(raw'); 
+   fclose(fid); 
+   options = jsondecode(str);
+else
+   options = load(parmfile); 
 end
 
 options.animal=getparm(options,'animal','Tartufo');
@@ -73,60 +84,63 @@ dat=LoadMFile([job.runs_root filesep job.runs{1}]);
 switch dat.globalparams.HWparams.DAQSystem
     case 'Open-Ephys'
         runinfo=rawgetinfo([job.runs_root filesep job.runs{1}],dat.globalparams);
-        % override electrode name, if specified in options
-        electrode_name = getparm(options,'channel_map', runinfo.electrode);
-        switch electrode_name
-            case {'64D_slot1','64D_slot2','64M_slot1','64M_slot2', '64D_slot1_bottom', '64D_slot2_bottom'}
-                job.chanMap=[SERVER_PATH 'code' filesep 'KiloSort' filesep 'chanMap_' electrode_name '.mat'];
-                job.Nchan=64;
-                job.Nfilt= 96;                
-            case {'128D'}
-                [s, UCLA_to_OEP]=probe_128D();
-            case {'128P_bottom'}
-                job.chanMap=[SERVER_PATH 'code' filesep 'KiloSort' filesep 'chanMap_' electrode_name '.mat'];
-                job.Nchan=128;
-                job.Nfilt=192;
-            case 'neuropixPhase3A'
-                job.chanMap = [SERVER_PATH 'code' filesep 'KiloSort' filesep 'chanMap_' electrode_name '.mat'];
-                job.Nchan=384;
-                job.Nfilt=384;
-                job.keep_local= true; % flag to keep big local files for sorting and curating
-                
-            case 'unknown'
+        
+        %Find and load channel map
+        channel_map = getparm(options,'channel_map', '');
+        if ~isempty(channel_map)
+            %1st priority: If a channel_map was passed in options, use it
+            fprintf('Using %s channel map as passed in options struct\n',channel_map)
+            job.chanMap = [SERVER_PATH 'code' filesep 'KiloSort' filesep 'chanMap_' channel_map '.mat'];
+        else
+            %2nd priority: If a channel_map is filled out for this penetration in celldb, use it
+            [channel_map, channel_map_path] = get_celldb_channel_map(options.site);
+            if ~isempty(channel_map)
+                fprintf('Using %s channel map specified in celldb\n',channel_map)
+                job.chanMap = channel_map_path;
+            elseif ~strcmp(runinfo.electrode,'unknown')
+                %3rd priority: If a channel_map was given in the name of the channel mapping node in OEP, use it
+                fprintf('Using %s channel map given by name of channel mapping node in OEP (saved in settings.xml)',runinfo.electrode)
+                job.chanMap = [SERVER_PATH 'code' filesep 'KiloSort' filesep 'chanMap_' runinfo.electrode '.mat'];
+            else
                 if runinfo.spike_channels(1)==54 && length(runinfo.spike_channels)==64
-                    %channel map for UCLA 64D in Intan headstage slot 1
-                    job.chanMap=[SERVER_PATH 'code' filesep 'KiloSort' filesep 'chanMap_64D_slot1.mat'];
-                    job.Nchan=64;
-                    job.Nfilt= 96;
-                    ename='64D_slot1';
+                    channel_map = '64D_slot1';
                 elseif runinfo.spike_channels(1)==11 && length(runinfo.spike_channels)==64
-                    job.chanMap=[SERVER_PATH 'code' filesep 'KiloSort' filesep 'chanMap_64D_slot1_bottom.mat'];
-                    job.Nchan=64;
-                    job.Nfilt= 96;
-                    ename='64D_slot1_bottom';
+                    channel_map ='64D_slot1_bottom';    
                 elseif runinfo.spike_channels(1)==118 && length(runinfo.spike_channels)==64
-                    %channel map for UCLA 64D in Intan headstage slot 2
-                    job.chanMap=[SERVER_PATH 'code' filesep 'KiloSort' filesep 'chanMap_64D_slot2.mat'];
-                    job.Nchan=64;
-                    job.Nfilt= 96;
-                    ename='64D_slot2';
+                    channel_map ='64D_slot2';
+                elseif runinfo.spike_channels(1)==75 && length(runinfo.spike_channels)==64
+                    channel_map ='64D_slot2_bottom';             
                 elseif runinfo.spike_channels(1)==17 && length(runinfo.spike_channels)==128
-                    %channel map for UCLA 128D w/ Intan headstage
-                    job.chanMap=[SERVER_PATH 'code' filesep 'KiloSort' filesep 'chanMap_128D_SepColsOffset.mat'];
-                    job.Nchan=128;
-                    job.Nfilt= 192;
-                    ename='128D';
+                    channel_map = '128D_SepColsOffset';
                 else
-                    error(['Electrode not specified in Settings.xml, and can''t be inferred by chappel mapping (not 6D, 64B, or 128D).'...
-                        ' Rename channel map module in Open Ephys to save electrode name. Then create a channel map for this electrode and add it to this code. ',...
-                        ' See .../multichannel_sorting/KiloSort/configFiles/createChannelMapFile.m'])
+                    error(['Channel map not found in options struct, celldb penetration channel_map field, or by name of channel mapping node in OEP. ',...
+                        'Could not be guessed based on channel map used in OEP signal chain.'])
                 end
-                warning(['Electrode was not specified in Settings.xml. Rename channel map module in Open Ephys to save electrode name.'...
-                    ' Guessed ' ename 'based on channel map.'])
+                warning(['Channel map not found in options struct, celldb penetration channel_map field, or by name of channel mapping node in OEP. ',...
+                    'Guessed %s based on channel map used in OEP signal chain.'], channel_map)
+                job.chanMap = [SERVER_PATH 'code' filesep 'KiloSort' filesep 'chanMap_' channel_map '.mat'];                
+            end
+        end
+        if ~exist(job.chanMap,'file')
+                error(['Channel map does not exist in %s. Create a channel map for this electrode.',...
+            ' See /auto/users/lbhb/Code/multichannel_sorting/KiloSort2/configFiles/createChannelMapFile.m'])
+        end
+        ch=load(job.chanMap,'chanMap');
+        job.Nchan = length(ch.chanMap);
+        if job.Nchan >= 384 %Neuropixels probes, use same # of clusters            
+            job.Nfilt = job.Nchan;
+        else % other probes use 1.5 times
+            job.Nfilt = job.Nchan*1.5;
+        end
+        switch channel_map
+            case 'neuropixPhase3A'
+                job.keep_local = true; % flag to keep big local files for sorting and curating
             otherwise
-                error(['Open-Ephys settings.xml said that the electrode was: "' electrode_name '". No Kilosort channel map file exists for this electrode.'...
-                    'Create a channel map for this electrode and add it to this code. ',...
-                        ' See .../multichannel_sorting/KiloSort/configFiles/createChannelMapFile.m'])
+                job.keep_local = false;
+        end
+        if isfield(options,'keep_local')
+            fprintf('Ovverwriting keep_local from default of %d to %d as set in options.\n',job.keep_local,options.keep_local)
+            job.keep_local = options.keep_local;
         end
         
     case 'MANTA'
@@ -269,40 +283,10 @@ else
 end
 fprintf(['Created job: ',fn,'\n'])
 
-if(1)
-    rundataid=0;
-    if job.kilosortVersion==3
-        progname='matlabbg queuerun';
-        parmstring=['UTkilosort3_run_job(''',fn,''');'];
-    elseif job.kilosortVersion==2.5
-        progname='matlabbg queuerun';
-        parmstring=['UTkilosort2pt5_run_job(''',fn,''');'];
-    else
-        progname='matlabbg queuerun';
-        parmstring=['UTkilosort2_run_job(''',fn,''');'];
-    end
-    allowqueuemaster=1;
-    note=['Kilosort job: ',job.name];
-    user=getenv('USER');
-    user = 'lbhb';
-    r=dbGetConParms();
-    rtemp=r;
-    rtemp.DB_SERVER='hyrax.ohsu.edu:3306';
-    
-    % temporarily connect to NEMS db
-    dbSetConParms(rtemp);
-    
-    if ~exist('dbaddqueue','file')
-        narf_set_path
-    end
-    queueidx=dbaddqueue(rundataid,progname,parmstring,allowqueuemaster,note,user,job.GPU);
-    save(fn,'-append','queueidx');
-    job.queueidx=queueidx;
-    
-    % restore old db connection
-    dbSetConParms(r);
-    
-    fprintf('\n')
-    disp(['<a href="http://hyrax.ohsu.edu/celldb/queuemonitor.php?user=%25&complete=-2&machinename=%25&notemask=',job.name,'">Check job status</a>'])
-    disp(['<a href="http://hyrax.ohsu.edu/celldb/queuemonitor.php?user=%&complete=-1&machinename=manatee&notemask=">See what''s running on manatee</a>'])
-end    
+if job.kilosortVersion==3
+    UTkilosort3_run_job(fn);
+elseif job.kilosortVersion==2.5
+    UTkilosort2pt5_run_job(fn);
+else
+    UTkilosort2_run_job(fn);
+end

@@ -776,7 +776,7 @@ if(~options.load_as_temp && isempty(strfind(job_file,'completed')))
 end
 
 % Copies over the results file from the local folder to the server one
-if(~options.load_as_temp && isfield(job, 'results_path_server'))
+if(~options.load_as_temp && isfield(job, 'keep_local') && job.keep_local)
     
     if exist([job.results_path_server filesep],'dir')
         [s,m,mid]=rmdir([job.results_path_server filesep], 's');
@@ -811,7 +811,8 @@ if(~options.load_as_temp && isfield(job, 'results_path_server'))
     % job = rmfield(job, 'fbinary_server');
     
 else
-    fprintf('skipping transfer of big files to server, no destination specified')
+    fprintf('skipping transfer of big files to server, no destination specified \n')
+    fprintf('location of big binary files is %s \n', job.fbinary)
 end
 
 end

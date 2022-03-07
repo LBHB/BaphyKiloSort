@@ -77,22 +77,32 @@ end
 %% creates all the local relevant directories, saving the location of server counterpart
 
 % todo figure out a more streamline way of passing these paths
-job.fbinary_server = job.fbinary;
-job.results_path_server = job.results_path;
-job.results_path_temp_server = job.results_path_temp;
+
+if isfield(job, 'keep_local') && job.keep_local
+    
+    % if reruning a job, server locations probably already exist and we
+    % dont want o override them with the local directions
+    
+    if ~isfield(job, 'fbinary_server') && ~isfield(job, 'results_path_server')...
+            && ~isfield(job, 'results_path_temp_server')
+        
+        job.fbinary_server = job.fbinary;
+        job.results_path_server = job.results_path;
+        job.results_path_temp_server = job.results_path_temp;
 
 
-job.fbinary =  strrep(job.fbinary, BAPHYDATAROOT, '/KiloSort/');
-job.results_path = strrep(job.results_path, BAPHYDATAROOT, '/KiloSort/');
-job.results_path_temp = strrep(job.results_path_temp, BAPHYDATAROOT, '/KiloSort/');
+        job.fbinary =  strrep(job.fbinary, BAPHYDATAROOT, '/KiloSort/');
+        job.results_path = strrep(job.results_path, BAPHYDATAROOT, '/KiloSort/');
+        job.results_path_temp = strrep(job.results_path_temp, BAPHYDATAROOT, '/KiloSort/');
+    end
+else
+    job.keep_local=0;
+end
 
 job.fproc = [job.results_path_temp filesep 'temp_wh.dat'];
 
-
-
+fprintf("creating local files at %s \n", fileparts(job.fbinary));
 UTmkdir(fileparts(job.fbinary)); % this should create folder for fproc too
-UTmkdir(fileparts(job.fbinary_server));
-
 
 if exist([job.results_path filesep],'dir')
     [s,m,mid]=rmdir([job.results_path filesep], 's');
@@ -100,11 +110,14 @@ if exist([job.results_path filesep],'dir')
 end
 UTmkdir([job.results_path filesep])
 
-
 % anarchy permissions.
 [w,s]=unix(['chmod 777 ',fileparts(job.fbinary)]); if w, warning(s), end
-[w,s]=unix(['chmod 777 ',fileparts(job.fbinary_server)]); if w, warning(s), end
 [w,s]=unix(['chmod 777 ',job.results_path]);if w, error(s), end
+
+if job.keep_local
+    UTmkdir(fileparts(job.fbinary_server));
+    [w,s]=unix(['chmod 777 ',fileparts(job.fbinary_server)]); if w, warning(s), end
+end
 
 
 %% Kilosort2 master start. MLE.
@@ -355,7 +368,7 @@ fprintf('found %d good units \n', sum(rez.good>0))
 %% save results in .npy for phy and in .mat for baphy remote
 
 % python, the superior language
-fprintf('Localy saving results to Phy in %s  \n', job.results_path)
+fprintf('Saving results for Phy in %s  \n', job.results_path)
 rezToPhy(rez, job.results_path);
 
 
@@ -381,7 +394,7 @@ if 1
 
     % save final results as rez2
     fname = [job.results_path_temp filesep 'rez.mat'];
-    fprintf('Saving final results in %s  \n', fname);
+    fprintf('Saving matlab results in %s  \n', fname);
     save(fname,'-Struct', 'rez', '-v7.3');
 end
 
@@ -408,6 +421,7 @@ job = rmfield(job, 'chanMapDir');
 
 % remove temporary file
 delete(job.fproc);
+job = rmfield(job, 'fproc');
 
 job.status=1;
 job.kcoords=rez.ops.kcoords;
