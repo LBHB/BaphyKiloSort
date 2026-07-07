@@ -64,7 +64,7 @@ numproc=length(queuedata);
 
 % get load either locally or via ssh
 if hostislocal
-   r=load('/proc/loadavg');
+   r=load('-ASCII', '/proc/loadavg');
    
    l1=r(1);
    l5=r(2);

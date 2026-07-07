@@ -18,14 +18,14 @@ if ~exist('parent_handle', 'var')
         'HandleVisibility', 'off');
 end
 
-% if isempty(which('TableSorter'))
-%     TPATH = fileparts(which('baphy_set_path'));
-%     javaaddpath([TPATH '/libs/TableSorter.jar']);
-% end
-% if isempty(which('TableColSUs umnAdjuster'))
-%     TPATH = fileparts(which('narf_set_path'));
-%     javaaddpath([TPATH '/libs/TableColumnAdjuster.jar']);
-% end
+if isempty(which('TableSorter'))
+    TPATH = fileparts(which('narf_set_path'));
+    javaaddpath([TPATH '/libs/TableSorter.jar']);
+end
+if isempty(which('TableColumnAdjuster'))
+    TPATH = fileparts(which('narf_set_path'));
+    javaaddpath([TPATH '/libs/TableColumnAdjuster.jar']);
+end
 
 uicontrol('Parent', parent_handle, 'Style', 'text', 'Units', 'pixels',...
     'HorizontalAlignment', 'left', 'String', 'Name:', ...
@@ -96,48 +96,30 @@ handles.job_table = uitable('Parent', parent_handle, ...
     'Enable', 'on', 'Units', 'pixels',...
     'RowName', [], ...
     'ColumnWidth', {700,80,80,80}, ...
-    'ColumnName', {'Name', 'Sorted', 'Saved in|Phy','Saved to|database'}, ...
+    'ColumnName', {'Name', 'Sorted', 'Saved in Phy','Saved to|database'}, ...
     'Position', [pad pad w-pad*2 ht]);
 
 
 % Configure the job table selection to update the center and right panels
-% hJS = findjobj(handles.job_table);
-% hJT = hJS.getViewport.getView;
-% hJT.setNonContiguousCellSelection(false);
-% hJT.setColumnSelectionAllowed(false);
-% hJT.setRowSelectionAllowed(true);
-% hJT.setSelectionMode(0); % Allow only a single row to be selected at once
-% hJTcb = handle(hJT, 'CallbackProperties');
-% set(hJTcb, 'MouseReleasedCallback', {@job_table_row_selected, parent_handle});
-% set(hJTcb, 'KeyPressedCallback', {@job_table_row_selected, parent_handle});
-
-set(handles.job_table, 'CellSelectionCallback', @(src, event) job_table_row_selected(src, event, parent_handle));
-
+hJS = findjobj(handles.job_table);
+hJT = hJS.getViewport.getView;
+hJT.setNonContiguousCellSelection(false);
+hJT.setColumnSelectionAllowed(false);
+hJT.setRowSelectionAllowed(true);
+hJT.setSelectionMode(0); % Allow only a single row to be selected at once
+hJTcb = handle(hJT, 'CallbackProperties');
+set(hJTcb, 'MouseReleasedCallback', {@job_table_row_selected, parent_handle});
+set(hJTcb, 'KeyPressedCallback', {@job_table_row_selected, parent_handle});
 jobs=[];
 ji=[];
 %reload_job_table
 
-    % function job_table_row_selected(Hobj,ev,a)
-    %     ji = Hobj.getSelectedRows()+1;
-    %     j=load([jobs(ji).pth filesep jobs(ji).name],'results_path');
-    %     r_pth=j.results_path;
-    %     cmd=['phy_lbhb template-gui ' r_pth filesep 'params.py\n'];
-    %     fprintf(cmd)
-    % end
-
-    function job_table_row_selected(src, event, a)
-        % Check if any cell is selected
-        if isempty(event.Indices)
-            return;
-        end
-    
-        % Get the row index of the selected cell (event.Indices returns [row, col])
-        ji = event.Indices(1);
+    function job_table_row_selected(Hobj,ev,a)
+        ji = Hobj.getSelectedRows()+1;
         j=load([jobs(ji).pth filesep jobs(ji).name],'results_path');
         r_pth=j.results_path;
         cmd=['phy_lbhb template-gui ' r_pth filesep 'params.py\n'];
         fprintf(cmd)
-
     end
 
     function reload_job_table(Hobj,ev)

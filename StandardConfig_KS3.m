@@ -1,45 +1,23 @@
-function ops=UTkilosort3_default_parameters
-%% LBHB specific stuff
-
-ops.kilosortVersion = 3;
-ops.verbose             = 1; % whether to print command line progress		
-ops.datatype            = 'openEphys';  
-ops.common_rejection_mode = 'none';  % 'mean' 'median'
-
-%% Default parameters from vanilla KS3
-
-% show figures during template matching
-ops.fig=1;
+ops.chanMap             = 'D:\GitHub\KiloSort2\configFiles\neuropixPhase3A_kilosortChanMap.mat';
+% ops.chanMap = 1:ops.Nchan; % treated as linear probe if no chanMap file
 
 % sample rate
 ops.fs = 30000;  
 
-% time range to sort
-ops.trange = [0 Inf]; 
-
 % frequency for high pass filtering (150)
-%ops.fshigh = 150; % from default file
-ops.fshigh = 300; % from main loop
-    
-% main parameter changes from Kilosort2 to v2.5
-ops.sig        = 20;  % spatial smoothness constant for registration
-ops.fshigh     = 300; % high-pass more aggresively
-ops.nblocks    = 5; % blocks for registration. 0 turns it off, 1 does rigid registration. Replaces "datashift" option. 
-    
+ops.fshigh = 150;   
 
 % minimum firing rate on a "good" channel (0 to skip)
 ops.minfr_goodchannels = 0.1; 
 
 % threshold on projections (like in Kilosort1, can be different for last pass like [10 4])
-%ops.Th = [10 4]; % from  defaul file
-ops.Th = [9 9]; % from main loop
+ops.Th = [10 4];  
 
 % how important is the amplitude penalty (like in Kilosort1, 0 means not used, 10 is average, 50 is a lot) 
 ops.lam = 10;  
 
 % splitting a cluster at the end requires at least this much isolation for each sub-cluster (max = 1)
-%ops.AUCsplit = 0.9; % defaul
-ops.AUCsplit = 0.95; % LBHB, less splitting 
+ops.AUCsplit = 0.9; 
 
 % minimum spike rate (Hz), if a cluster falls below this for too long it gets removed
 ops.minFR = 1/50; 
@@ -68,4 +46,5 @@ ops.nSkipCov            = 25; % compute whitening matrix from every N-th batch
 ops.scaleproc           = 200;   % int16 scaling of whitened data
 ops.nPCs                = 3; % how many PCs to project the spikes into
 ops.useRAM              = 0; % not yet available
+
 %%

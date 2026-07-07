@@ -44,15 +44,36 @@ job=load(job_file);
 
 for i=1:length(job.runs)
     LoadMFile([job.runs_root filesep job.runs{i}]);
+    if ~isfield(globalparams,'Module')
+        globalparams.Module='baphy';
+    end
+
     globalparams_{i}=globalparams;
     if strcmp(globalparams.HWparams.DAQSystem,'Open-Ephys')
         job.runinfo(i)=rawgetinfo([job.runs_root filesep job.runs{i}],globalparams);
+
+        probe_id = getparm(job, 'probe_id','A');
+        for k=1:length(job.runinfo(i).json_files)
+            if strcmpi(job.runinfo(i).json_files(k).probe_id, probe_id)
+                job.runinfo(i).json_file = job.runinfo(i).json_files(k).spikes;
+                job.runinfo(i).json_file_LFP = job.runinfo(i).json_files(k).lfp;
+                job.runinfo(i).data_name = job.runinfo(i).json_files(k).data_name;
+                job.runinfo(i).event_ind_TTL = job.runinfo(i).json_files(k).event_ind_TTL;
+                fprintf('probe_id=%s spikefile=%s\n', probe_id, job.runinfo(i).json_file);
+            end
+        end
         run_pref=strsep(job.runs{i},'_');
         run_pref=run_pref{1};
-        checktgzevp=[job.runs_root filesep 'raw' filesep run_pref '.tgz'];
         tic;
-        evpfile=evpmakelocal(checktgzevp,job.runinfo(i).evpv);
+        if ~strcmp(globalparams.Module,'Psi')
+            checktgzevp=[job.runs_root filesep 'raw' filesep run_pref '.tgz'];
+            evpfile=evpmakelocal(checktgzevp,job.runinfo(i).evpv);
+        else
+            checktgzevp=[globalparams.rawfilename, '.tgz'];
+            evpfile=evpmakelocal(checktgzevp,job.runinfo(i).evpv);
+        end
         slashes=strfind(evpfile,filesep);
+       
         for sli=0:3
             [w,s]=unix(['chmod 777 ',evpfile(1:slashes(end-sli))]); if w, warning(s), end
         end
@@ -120,35 +141,27 @@ if job.keep_local
 end
 
 
-%% Kilosort2 master start. MLE.
-
-addpath(genpath([MULTICHANNEL_SORTING_PATH, 'KiloSort2'])) % path to kilosort folder
-addpath(genpath([MULTICHANNEL_SORTING_PATH, 'open-ephys-matlab-tools'])) % perhaps this has all what we need! MLE
-rmpath(genpath([MULTICHANNEL_SORTING_PATH, 'KiloSort2' filesep 'CUDA'])) % path to kilosort folder
-if ~verLessThan('matlab', '9.8')%2020a
-    addpath([MULTICHANNEL_SORTING_PATH, 'KiloSort2' filesep 'CUDA' filesep 'MATLAB2020'])
-%elseif ~verLessThan('matlab', '9.3')%2017a
-else
-    addpath([MULTICHANNEL_SORTING_PATH, 'KiloSort2' filesep 'CUDA' filesep 'MATLAB2017'])
-    %Might not work for versions < 2017a, need to recompile (re-run mexGPUall)
-end
-    
-addpath([MULTICHANNEL_SORTING_PATH, 'npy-matlab']) % path to npy-matlab
-
 %% LBHB preprocessing
 
 switch job.datatype
     case 'Open-Ephys'
-        % old OPE hav speciale format, new OEP are binary files
+        % old OPE have special format, new OEP are binary files
         if strcmp(job.runinfo(1).datatype, 'binary')
+            job = concatenateOpenEphysBinary(job);
+        elseif strcmp(job.runinfo(1).datatype, 'Binary')
             job = concatenateOpenEphysBinary(job);
         else
             job = convertOpenEphysToRawBInary(job);
         end
         % transforms the channel map form file to struct and sets into 1
         % indexing, savese the channelMap directory for cleaning up
-        job.chanMapDir = job.chanMap;
-        job.chanMap = load(job.chanMap);
+        if isstruct(job.chanMap)
+            job.chanMapDir = '';
+            ch=job.chanMap;
+        else
+            job.chanMapDir = job.chanMap;
+            ch=load(job.chanMap,'chanMap');
+        end
         job.chanMap.chanMap = job.chanMap_KiloRaw;
         
     case 'MANTA'
@@ -171,7 +184,6 @@ switch job.runinfo(1).evpv
         for i=1:length(job.runs)
             not_filesep=setdiff({'/','\'},filesep);not_filesep=not_filesep{1};
             globalparams_{i}.rawfilename=strrep(globalparams_{i}.rawfilename,not_filesep,filesep);
-            
             if strcmp(job.runinfo(i).datatype, 'binary')
                 %Get trial onsets from events in continuous folder
                 EVdata = load_open_ephys_binary(job.runinfo(i).json_file,'events',job.runinfo(i).event_ind_TTL);
@@ -186,8 +198,47 @@ switch job.runinfo(1).evpv
                                   job.recording_start(i)+1)' + ...
                                   sum(job.nSamplesBlocks(1:i-1)); 
                
+            elseif strcmp(job.runinfo(i).datatype, 'Binary')
+
+                spike_rec0 = job.runinfo(i).spike_rec;
+                data_name = job.runinfo(i).data_name;
+                spike_rec=spike_rec0(1);
+                probe_id = job.probe_id;
+                record_node = 1;
+                for k=1:length(job.runinfo(i).json_files)
+                    if strcmpi(job.runinfo(i).json_files(k).probe_id, probe_id)
+                        spike_rec=spike_rec0(k);
+                        data_name = job.runinfo(i).json_files(k).data_name;
+                        record_node = job.runinfo(i).json_files(k).record_node
+                    end
+                end
+
+                sampleRate(i)=job.runinfo(i).spikefs;
+                trial_onsets = job.runinfo(i).recordings(spike_rec).trial_onsets;
+                trial_offsets = job.runinfo(i).recordings(spike_rec).trial_offsets;
+                
+                if isfield(job, 'first_timestamps')
+                    startTimeStamp = job.first_timestamps(i);
+                else
+                    cont = job.runinfo(i).session.recordNodes{record_node}.recordings{1}.continuous;
+                    ev = job.runinfo(i).session.recordNodes{spike_rec}.recordings{1}.ttlEvents;
+                    event_keys = ev.keys();
+                    %k = event_keys{find(contains(event_keys,'AP') & contains(event_keys,'Neuropix'),1)};
+                    k = event_keys{find(contains(event_keys,data_name), 1)};
+                    startTimeStamp = cont(k).metadata.startTimestamp;
+                end
+                
+                % onsets in samples from the recording start
+                trial_onsets_{i}=(trial_onsets - startTimeStamp+1)' + sum(job.nSamplesBlocks(1:i-1));
+                
             else
-                [~, EVinfo(i),EVtimestamps{i}] = load_open_ephys_data_faster([globalparams_{i}.rawfilename,filesep,'all_channels.events']);
+                x = dir([globalparams_{i}.rawfilename,filesep,'all_channels.events']);
+                if isempty(x)
+                    x=dir([globalparams_{i}.rawfilename,filesep,'*',filesep,'all_channels.events']);
+                end
+                OEfolder=x(1).folder;
+                [~, EVinfo(i),EVtimestamps{i}] = load_open_ephys_data_faster([OEfolder,filesep,'all_channels.events']);
+                
                 sampleRate(i)=EVinfo(i).header.sampleRate;
                 %recording_startO(i)=EVtimestamps{i}(1);
 
@@ -323,89 +374,272 @@ if remove_laser_artifact_sec>0
     fprintf('\n')
 end
 
+if isfield(job,'skip_channels')
+    effective_chan = job.chanMap.chanMap + job.chanMap.bank*384;
+    for ii = 1:length(effective_chan)
+        if ismember(effective_chan(ii), job.skip_channels)
+            job.chanMap.connected(ii)=0;
+        end
+    end
+    if ~isempty(job.skip_channels)
+        disp("Skipping channels");
+        job.skip_channels
+    end
+end
+
 %%% End LBHB special code
 
 %% LBHB save block (different concatenated files) sizes and start times
 blocksizes=job.nSamplesBlocks;
-blockstarts=job.StartTime_re_Run1*job.chanMap.fs;
+blockstarts=job.StartTime_re_Run1*job.fs;
 % actual saving below because rezToPhy deletes files
 
-%% this block runs all the steps of the algorithm
-fprintf('Looking for data inside %s \n', job.fbinary)
+%% BEGIN KiloSort code
+if job.kilosortVersion==2
 
-% preprocess data to create temp_wh.dat
-rez = preprocessDataSub(job);
-
-% time-reordering as a function of drift
-rez = clusterSingleBatches(rez);
-UTkilosort2_plot_drift(rez,1); % plot drift and save in results file
-
-% main tracking and template matching algorithm
-try
-    rez = learnAndSolve8b(rez);
-catch err
-    dev=gpuDevice(1);
-    freeGB = dev.AvailableMemory/1024/1024/1024;
-    totalGB = dev.TotalMemory/1024/1024/1024;
-    fprintf('%0.2g/%0.2g GB free on GPU.\n', freeGB,totalGB);
-    fprintf(err)
-    rethrow(err)
-end
-% final merges
-rez = find_merges(rez, 1);
-
-% final splits by SVD
-rez = splitAllClusters(rez, 1);
-
-% final splits by amplitudes
-rez = splitAllClusters(rez, 0);
-
-% decide on cutoff
-rez = set_cutoff(rez);
-
-fprintf('found %d good units \n', sum(rez.good>0))
-
-%% save results in .npy for phy and in .mat for baphy remote
-
-% python, the superior language
-fprintf('Saving results for Phy in %s  \n', job.results_path)
-rezToPhy(rez, job.results_path);
-
-
-% matlab... that other language 
-if 1
-    % discard features in final rez file (too slow to save)
-    rez.cProj = [];
-    rez.cProjPC = [];
-
-    % transforms GPU arrays into normal arrays
-    fn=fieldnames(rez);
-    for i=1:length(fn)
-        if isa(rez.(fn{i}),'gpuArray')
-            rez.(fn{i})=gather_try(rez.(fn{i}));
-        end
+    addpath(genpath([MULTICHANNEL_SORTING_PATH, 'KiloSort2'])) % path to kilosort folder
+    addpath(genpath([MULTICHANNEL_SORTING_PATH, 'open-ephys-matlab-tools'])) % perhaps this has all what we need! MLE
+    rmpath(genpath([MULTICHANNEL_SORTING_PATH, 'KiloSort2' filesep 'CUDA'])) % path to kilosort folder
+    if ~verLessThan('matlab', '9.12')%2022a
+        addpath([MULTICHANNEL_SORTING_PATH, 'KiloSort2' filesep 'CUDA' filesep 'MATLAB2022'])
+    elseif ~verLessThan('matlab', '9.8')%2020a
+        addpath([MULTICHANNEL_SORTING_PATH, 'KiloSort2' filesep 'CUDA' filesep 'MATLAB2020'])
+    %elseif ~verLessThan('matlab', '9.3')%2017a
+    else
+        addpath([MULTICHANNEL_SORTING_PATH, 'KiloSort2' filesep 'CUDA' filesep 'MATLAB2017'])
+        %Might not work for versions < 2017a, need to recompile (re-run mexGPUall)
     end
-    fn=fieldnames(rez.ops);
-    for i=1:length(fn)
-        if isa(rez.ops.(fn{i}),'gpuArray')
-            rez.ops.(fn{i})=gather_try(rez.ops.(fn{i}));
-        end
+        
+    addpath([MULTICHANNEL_SORTING_PATH, 'npy-matlab']) % path to npy-matlab
+    
+    % this block runs all the steps of the algorithm
+    fprintf('Looking for data inside %s \n', job.fbinary)
+    
+    % preprocess data to create temp_wh.dat
+    rez = preprocessDataSub(job);
+    
+    % time-reordering as a function of drift
+    rez = clusterSingleBatches(rez);
+    UTkilosort2_plot_drift(rez,1); % plot drift and save in results file
+    
+    % main tracking and template matching algorithm
+    try
+        rez = learnAndSolve8b(rez);
+    catch err
+        dev=gpuDevice(1);
+        freeGB = dev.AvailableMemory/1024/1024/1024;
+        totalGB = dev.TotalMemory/1024/1024/1024;
+        fprintf('%0.2g/%0.2g GB free on GPU.\n', freeGB,totalGB);
+        disp(err.message)
+        rethrow(err)
     end
+    % final merges
+    rez = find_merges(rez, 1);
+    
+    % final splits by SVD
+    rez = splitAllClusters(rez, 1);
+    
+    % final splits by amplitudes
+    rez = splitAllClusters(rez, 0);
+    
+    % decide on cutoff
+    rez = set_cutoff(rez);
+    
+    fprintf('found %d good units \n', sum(rez.good>0))
+    
+    %% save results in .npy for phy and in .mat for baphy remote
+    
+    % python, the superior language
+    fprintf('Saving results for Phy in %s  \n', job.results_path)
+    rezToPhy(rez, job.results_path);
+    
+    
+    % matlab... that other language 
+    if 1
+        % discard features in final rez file (too slow to save)
+        rez.cProj = [];
+        rez.cProjPC = [];
+    
+        % transforms GPU arrays into normal arrays
+        fn=fieldnames(rez);
+        for i=1:length(fn)
+            if isa(rez.(fn{i}),'gpuArray')
+                rez.(fn{i})=gather_try(rez.(fn{i}));
+            end
+        end
+        fn=fieldnames(rez.ops);
+        for i=1:length(fn)
+            if isa(rez.ops.(fn{i}),'gpuArray')
+                rez.ops.(fn{i})=gather_try(rez.ops.(fn{i}));
+            end
+        end
+    
+        % save final results as rez2
+        fname = [job.results_path_temp filesep 'rez.mat'];
+        fprintf('Saving matlab results in %s  \n', fname);
+        save(fname,'-Struct', 'rez', '-v7.3');
+    end
+    % Kilosort2 master end. MLE
+    
+elseif job.kilosortVersion==2.5
 
-    % save final results as rez2
-    fname = [job.results_path_temp filesep 'rez.mat'];
-    fprintf('Saving matlab results in %s  \n', fname);
-    save(fname,'-Struct', 'rez', '-v7.3');
+    addpath(genpath([MULTICHANNEL_SORTING_PATH, 'KiloSort2pt5'])) % path to kilosort folder
+    addpath(genpath([MULTICHANNEL_SORTING_PATH, 'open-ephys-matlab-tools'])) % perhaps this has all what we need! MLE
+    %addpath(genpath([MULTICHANNEL_SORTING_PATH, 'KiloSort2pt5' filesep 'CUDA'])) % path to kilosort folder
+    %if ~verLessThan('matlab', '9.12')%2022a
+    %addpath([MULTICHANNEL_SORTING_PATH, 'KiloSort2' filesep 'CUDA' filesep 'MATLAB2022'])
+    %end
+    
+    addpath([MULTICHANNEL_SORTING_PATH, 'npy-matlab']) % path to npy-matlab
+    
+    % this block runs all the steps of the algorithm
+    fprintf('Looking for data inside %s \n', job.fbinary);
+    job.sig        = 20;  % spatial smoothness constant for registration
+    job.fshigh     = 300; % high-pass more aggresively
+    job.nblocks    = 5; % blocks for registration. 0 turns it off, 1 does rigid registration. Replaces "datashift" option. 
+    
+    % preprocess data to create temp_wh.dat
+    rez = preprocessDataSub(job);
+    %
+    % NEW STEP TO DO DATA REGISTRATION
+    rez = datashift2(rez, 1); % last input is for shifting data
+
+    % ORDER OF BATCHES IS NOW RANDOM, controlled by random number generator
+    iseed = 1;
+                     
+    % main tracking and template matching algorithm
+    try
+        rez = learnAndSolve8b(rez, iseed);
+    catch err
+        dev=gpuDevice(1);
+        freeGB = dev.AvailableMemory/1024/1024/1024;
+        totalGB = dev.TotalMemory/1024/1024/1024;
+        fprintf('%0.2g/%0.2g GB free on GPU.\n', freeGB,totalGB);
+        fprintf(err)
+        rethrow(err)
+    end
+    
+    rez = learnAndSolve8b(rez, iseed);
+
+    % OPTIONAL: remove double-counted spikes - solves issue in which individual spikes are assigned to multiple templates.
+    % See issue 29: https://github.com/MouseLand/Kilosort/issues/29
+    %rez = remove_ks2_duplicate_spikes(rez);
+    
+    % final merges
+    rez = find_merges(rez, 1);
+
+    % final splits by SVD
+    rez = splitAllClusters(rez, 1);
+
+    % decide on cutoff
+    rez = set_cutoff(rez);
+    % eliminate widely spread waveforms (likely noise)
+    rez.good = get_good_units(rez);
+    
+    fprintf('found %d good units \n', sum(rez.good>0))
+
+
+    %% save results in .npy for phy and in .mat for baphy remote
+    
+    % python, the superior language
+    fprintf('Saving results for Phy in %s  \n', job.results_path)
+    rezToPhy(rez, job.results_path);
+    
+    
+    % matlab... that other language 
+    if 1
+        % discard features in final rez file (too slow to save)
+        rez.cProj = [];
+        rez.cProjPC = [];
+    
+        % transforms GPU arrays into normal arrays
+        fn=fieldnames(rez);
+        for i=1:length(fn)
+            if isa(rez.(fn{i}),'gpuArray')
+                rez.(fn{i})=gather_try(rez.(fn{i}));
+            end
+        end
+        fn=fieldnames(rez.ops);
+        for i=1:length(fn)
+            if isa(rez.ops.(fn{i}),'gpuArray')
+                rez.ops.(fn{i})=gather_try(rez.ops.(fn{i}));
+            end
+        end
+    
+        % save final results as rez2
+        fname = [job.results_path_temp filesep 'rez.mat'];
+        fprintf('Saving matlab results in %s  \n', fname);
+        save(fname,'-Struct', 'rez', '-v7.3');
+    end
+    % Kilosort2 master end. MLE
+
+
+
+elseif job.kilosortVersion==3 % new MLE
+
+    addpath(genpath([MULTICHANNEL_SORTING_PATH, 'KiloSort3'])) % path to kilosort folder
+    addpath([MULTICHANNEL_SORTING_PATH, 'npy-matlab']) % for converting to Phy
+    
+    if isstruct(job.chanMap)
+        job.chanMapDir = '';
+        ch=job.chanMap;
+    else
+        job.chanMapDir = job.chanMap;
+        ch=load(job.chanMap,'chanMap');
+    end
+    job.chanMap = job.chanMapDir; % KS3 asks for the file not the structe
+
+    %% this block runs all the steps of the algorithm
+    fprintf('Looking for data inside %s \n', job.fbinary)
+    
+    rez                = preprocessDataSub(job);
+    rez                = datashift2(rez, 1);
+    
+    [rez, st3, tF]     = extract_spikes(rez);
+    
+    rez                = template_learning(rez, tF, st3);
+    
+    [rez, st3, tF]     = trackAndSort(rez);
+    
+    rez                = final_clustering(rez, tF, st3);
+    
+    rez                = find_merges(rez, 1);
+
+    % python save for Phy
+    fprintf('Saving results for Phy in %s  \n', job.results_path)
+    rezToPhy2(rez, job.results_path);
+
+    % matlab save for database
+    if 1
+        % discard features in final rez file (too slow to save)
+        rez.cProj = [];
+        rez.cProjPC = [];
+    
+        % transforms GPU arrays into normal arrays
+        fn=fieldnames(rez);
+        for i=1:length(fn)
+            if isa(rez.(fn{i}),'gpuArray')
+                rez.(fn{i})=gather_try(rez.(fn{i}));
+            end
+        end
+        fn=fieldnames(rez.ops);
+        for i=1:length(fn)
+            if isa(rez.ops.(fn{i}),'gpuArray')
+                rez.ops.(fn{i})=gather_try(rez.ops.(fn{i}));
+            end
+        end
+    
+        % save final results as rez2
+        fname = [job.results_path_temp filesep 'rez.mat'];
+        fprintf('Saving matlab results in %s  \n', fname);
+        save(fname,'-Struct', 'rez', '-v7.3');
+    end
 end
-
 
 [~, sorting_computer] = system('hostname');
 
 job.sorting_compute = strtrim(sorting_computer);
-
-
-% Kilosort2 master end. MLE
-%% save and clean up
+    
 
 % save blocksizes and blockstarts
 writeNPY(blocksizes,[job.results_path,filesep,'blocksizes.npy']);
@@ -416,16 +650,18 @@ writeNPY(blockstarts,[job.results_path,filesep,'blockstarts.npy']);
 [w,s]=unix(['chmod -R 777 ',job.results_path_temp]);if w, error(s), end
 
 % re-establish chanMap to default i.e. path.
-job.chanMap = job.chanMapDir;
-job = rmfield(job, 'chanMapDir');
+if ~isstruct(job.chanMap)
+    job.chanMap = job.chanMapDir;
+    job = rmfield(job, 'chanMapDir');
+end
 
 % remove temporary file
-delete(job.fproc);
-job = rmfield(job, 'fproc');
+%delete(job.fproc);
+%job = rmfield(job, 'fproc');
 
 job.status=1;
 job.kcoords=rez.ops.kcoords;
 job.nt0min=rez.ops.nt0min;
 %job.min_spike_perc_keep=rez.ops.min_spike_perc_keep;
-save(job_file,'-Struct','job')
+save(job_file,'-Struct','job', '-v7.3')
 end

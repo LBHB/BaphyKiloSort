@@ -68,6 +68,26 @@ for i=1:length(job.runs)
     run_nums(i)=str2double(job.runs{i}(8:9));
 end
 
+
+if(options.load_as_temp)
+    savfolder=[fileparts(tempname) filesep];
+else
+    savfolder = [job.runs_root filesep 'sorted' filesep];
+end
+
+if exist(savfolder,'dir')
+    try
+        save([savfolder 'temp.mat'],'job_file');
+        delete([savfolder 'temp.mat'])
+    catch err
+        error('Coundn''t acess %s, change permissions and try again. (In bash do: sudo chmod a+w %s)',savfolder,savfolder)
+    end
+else
+    mkdir(savfolder)
+    [w,s]=unix(['chmod a+rw ',savfolder]);
+end
+
+phy_to_probe_map = [];
 if(options.use_automerge)
     rez=load([job.results_path_temp,filesep,'rez.mat'],'Wraw');
     rez_am=load([job.results_path_temp,filesep,'rez',suffix,'.mat'],'st3');
@@ -80,8 +100,30 @@ elseif isfield(job,'kilosortVersion') && job.kilosortVersion>=2
     rez.Wraw = [];
     % Kilosort2 may remove channels that don't mean min FR criterion.
     % check if this is the case
-    ch_map = load(job.chanMap);
-    chanMap = ch_map.chanMap(ch_map.connected);
+    if isstruct(job.chanMap)
+        ch_map=job.chanMap;
+    else
+        ch_map = load(job.chanMap);
+    end
+    if strcmp(ch_map.name, 'Neuropixels Phase3A')
+        if ~isfield(ch_map, 'bank')
+            ch_map.bank = [1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 ...
+                1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 ...
+                0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 ...
+                0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 ...
+                0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 ...
+                0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 ...
+                0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 ...
+                0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 ...
+                0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 ...
+                0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0];
+        end
+        ch_map.probeChannel = ch_map.bank*384+ch_map.chanMap0ind+1;
+        phy_to_probe_map = ch_map.probeChannel(ch_map.connected==1);
+    else
+        ch_map.probeChannel = ch_map.chanMap;
+    end
+    chanMap = ch_map.chanMap(ch_map.connected==1);
     kept_chans = rez.ops.chanMap;
     if size(kept_chans, 1) < size(chanMap, 1)
         if ~isempty(strfind(job.chanMap, 'slot2'))
@@ -108,8 +150,10 @@ elseif isfield(job,'kilosortVersion') && job.kilosortVersion>=2
     rez.st3=rez.st3(si,:);
     
 else
+    job.kilosortVersion=1;
     rez=load([job.results_path_temp,filesep,'rez',suffix,'.mat'],'st3','Wraw');
 end
+
 clusts=readNPY([job.results_path,suffix,filesep,'spike_clusters.npy']);
 template_ids=readNPY([job.results_path,suffix,filesep,'spike_templates.npy']);
 %templates_unwitened=readNPY([job.results_path,'templates_unw.npy']); %(64x82x64) % unwhitened templates
@@ -119,18 +163,41 @@ template_ids=readNPY([job.results_path,suffix,filesep,'spike_templates.npy']);
 %for 12 different most-informaive channels, channels used stored in pc_feature_ind
 %b=readNPY([job.results_path,'pc_feature_ind.npy']);
 
-cluster_group_file=[job.results_path,suffix,filesep,'cluster_groups.tsv'];
-if(~exist(cluster_group_file,'file'))
-    cluster_group_file=[job.results_path,suffix,filesep,'cluster_group.tsv'];
+if job.kilosortVersion>=3
+    cluster_info_file=[job.results_path,suffix,filesep,'cluster_info.tsv'];
+
+    fid= fopen(cluster_info_file);
+    C = textscan(fid,'%d %f %f %s %f %d %f %f %s %d %d %f',-1,'Headerlines',1,'Delimiter','\t');
+    fclose(fid);
+    ids=C{1};
+    amp=C{2};
+    ContamPct=C{3};
+    kslabel=C{4};
+    chan=C{6};
+    depth=C{7};
+    group=C{9};
+    snr=C{12};
+    su_mu_mask = cellfun(@(x) (strcmp(x,'good')|strcmp(x, 'mua')), group);
+    best_channels_phy=chan(su_mu_mask)+1;
+    snrs=snr(su_mu_mask)';
+    ContamPct=ContamPct(su_mu_mask);
+else
+    cluster_group_file=[job.results_path,suffix,filesep,'cluster_groups.tsv'];
     if(~exist(cluster_group_file,'file'))
-        error('Cluster group file (%s) does not exist and is needed to load completed jobs. Did you save in phy?',cluster_group_file)
+        cluster_group_file=[job.results_path,suffix,filesep,'cluster_group.tsv'];
+        if(~exist(cluster_group_file,'file'))
+            error('Cluster group file (%s) does not exist and is needed to load completed jobs. Did you save in phy?',cluster_group_file)
+        end
     end
+    fid= fopen(cluster_group_file);
+    C = textscan(fid,'%d %s',-1,'Headerlines',1,'Delimiter','\t');
+    fclose(fid);
+    ids=C{1};
+    group=C{2};
+    best_channels_phy=[];
+    snrs=[];
 end
-fid= fopen(cluster_group_file);
-C = textscan(fid,'%d %s',-1,'Headerlines',1,'Delimiter','\t');
-fclose(fid);
-ids=C{1};
-group=C{2};
+
 if(options.merge_all_units)
     ids=min(ids);
     group={'mua'};
@@ -196,20 +263,29 @@ end
 if(isempty(all_units))
     error('No units found, not saving')
 end
-best_chan_file=[job.results_path,suffix,filesep,'best_channels.npy'];
-if(exist(best_chan_file,'file'))
-    best_channels_phy=readNPY(best_chan_file)+1;
-else
-    best_channels_phy=[];
+if isempty(best_channels_phy)
+    best_chan_file=[job.results_path,suffix,filesep,'best_channels.npy'];
+    if(exist(best_chan_file,'file'))
+        best_channels_phy=readNPY(best_chan_file)+1;
+        if ~isempty(phy_to_probe_map)
+            % assign physical channel number
+            best_channels_phy = ch_map.probeChannel(best_channels_phy);
+            %best_channels_phy = phy_to_probe_map(best_channels_phy)
+        end
+    else
+        best_channels_phy=[];
+    end
 end
 if(options.merge_all_units)
     best_channels_phy=1;
 end
-snrs_file=[job.results_path,suffix,filesep,'snrs.npy'];
-if(exist(snrs_file,'file'))
-    snrs=readNPY(snrs_file);
-else
-    snrs=[];
+if isempty(snrs)
+    snrs_file=[job.results_path,suffix,filesep,'snrs.npy'];
+    if(exist(snrs_file,'file'))
+        snrs=readNPY(snrs_file);
+    else
+        snrs=[];
+    end
 end
 
 mean_waveforms_file=[job.results_path,suffix,filesep,'mean_waveforms.npy'];
@@ -382,7 +458,9 @@ if (spike_start_idx_by_run~=1)
     error('spike_start_idx_by_run should be 1 but it''s not.')
 end
 
-if (~options.load_as_temp || options.force_compute_quality_measures)
+if rez.ops.kilosortVersion==3
+    did_quality=false;
+elseif (~options.load_as_temp || options.force_compute_quality_measures)
     did_quality=true;
     %compute quality measures
     if(~isempty(best_channels_phy_merge))
@@ -529,7 +607,7 @@ for run_idx=1:length(job.runs)
             final_ui=uuns(j) + gSingleRawFields.unit_start{i};
             
             un_idx=(un==uuns(j));
-            idx=ismember(spike_assignments(all_idx),ids(units(un_idx)));
+            idx=ismember(int32(spike_assignments(all_idx)),ids(units(un_idx)));
             %idx(spiketimes
             if ispc
                 s{i}(final_ui,1).sorter=getenv('username');
@@ -586,7 +664,47 @@ for run_idx=1:length(job.runs)
                 end
             end
             
-            if(did_quality)
+            if(~isempty(snrs))
+                %iso perc is the error function of the maximum snr (across channels)
+                %for units that were assigned multiple clusters, be conservative and take the minumum
+                s{i}(final_ui).isolation_perc=min(100*erf(max(snrs(:,units(un_idx)),[],1)/2));
+            else
+                s{i}(final_ui).isolation_perc=NaN;
+            end
+            if rez.ops.kilosortVersion==3
+                s{i}(final_ui).ks_clusterID=ids(units(j));
+                % add ks cluster id to database for easier updating of db
+                % tables later on
+                gSingleRawFields.kilosort_cluster_id{i}(final_ui)=s{i}(final_ui).ks_clusterID;
+                % likewise, add sorting path to reference the sorting job
+                % for each cellid
+                gSingleRawFields.ksJobPath{i}{final_ui}=job.results_path;
+
+                % tweak iso pct for "good" single units
+                if strcmp(group{units(j)},'good')
+                    iso_pct = max([s{i}(final_ui).isolation_perc,95]);
+                else
+                    iso_pct = min([s{i}(final_ui).isolation_perc,85]);
+                end
+
+                gSingleRawFields.isolation{i}(final_ui)=iso_pct;
+                gSingleRawFields.phy_contamination_pct{i}(final_ui)=NaN;
+
+                s{i}(final_ui).isolation_distance=NaN;
+                s{i}(final_ui).contamination_perc=ContamPct(units(j));
+                s{i}(final_ui).isi_violation_perc=NaN;
+                s{i}(final_ui).isolation=iso_pct;
+
+                if any( bad_runs{s{i}(final_ui).ks_clusterID+1} == run_nums(run_idx))
+                    %if the run was marked as bad for this unit, force isolation to be 0
+                    fprintf('Kilosort Id %d (%s Channel %d, Unit %d) marked bad for %s\n',s{i}(final_ui).sortparameters.KiloSort_ids,...
+                        s{i}(final_ui).sortparameters.KiloSort_type,best_channels(i),final_ui,job.runs{run_idx});
+                    gSingleRawFields.isolation{i}(final_ui)=0;
+                    s{i}(final_ui).sortparameters.KiloSort_type = ['marked_bad_this_run_' s{i}(final_ui).sortparameters.KiloSort_type];
+                end
+
+
+            elseif (did_quality)
                 if(~isempty(best_channels_phy_merge))
                     metric_idx=find(ismember(mesure_cids,ids(units(un_idx))));
                     if(isempty(metric_idx))
@@ -606,13 +724,6 @@ for run_idx=1:length(job.runs)
                 s{i}(final_ui).isolation_distance=uQ(metric_idx);
                 s{i}(final_ui).contamination_perc=cR(metric_idx)*100;
                 s{i}(final_ui).isi_violation_perc=isiV(metric_idx)*100;
-                if(~isempty(snrs))
-                    %iso perc is the error function of the maximum snr (across channels)
-                    %for units that were assigned multiple clusters, be conservative and take the minumum
-                    s{i}(final_ui).isolation_perc=min(100*erf(max(snrs(:,units(un_idx)),[],1)/2));
-                else
-                    s{i}(final_ui).isolation_perc=NaN;
-                end
                 
                 % add ks cluster id to database for easier updating of db
                 % tables later on
@@ -665,11 +776,11 @@ for run_idx=1:length(job.runs)
             end
         end
     end
-    
-    if(options.load_as_temp)
-        savfile=[fileparts(tempname) filesep job.runs{run_idx}(1:end-2) '.spk.mat'];
+    parmbase=strrep(job.runs{run_idx},'.m','')
+    if (options.load_as_temp)
+        savfile=[fileparts(tempname) filesep parmbase '.spk.mat'];
     else
-        savfile = [job.runs_root filesep 'sorted' filesep job.runs{run_idx}(1:end-2) '.spk.mat'];
+        savfile = [job.runs_root filesep 'sorted' filesep parmbase '.spk.mat'];
     end
     if(options.delete_existing_spkfile && exist(savfile,'file'))
         file_exists=true;
@@ -704,7 +815,7 @@ for run_idx=1:length(job.runs)
     end
     nrec=runs_per_trial(run_idx);
     extras.numChannels=job.Nchan;
-    
+    extras.probe_id = getparm(job,'probe_id','');
     maxunits=1;
     for jj=1:length(s)
         maxunits=max(maxunits,size(s{jj},1));
@@ -791,18 +902,20 @@ if(~options.load_as_temp && isfield(job, 'keep_local') && job.keep_local)
     end
     UTmkdir([job.results_path_temp_server filesep])
     [w,s]=unix(['chmod 777 ',job.results_path_temp_server]);if w, error(s), end
-    
-    fprintf('Copying local proceced binary to server at %s  \n', job.fbinary_server)
-    tic
-    [w,s]=unix(['cp -u ', job.fbinary, ' ', job.fbinary_server]); if w, warning(s), end
-    toc
-    
-    fprintf('Copying local proceced rez to server at %s  \n', job.fbinary_server)
-    tic
-    [w,s]=unix(['cp -u ', [job.results_path_temp filesep 'rez.mat'], ' ' ,...
-                job.results_path_temp_server]); if w, warning(s), end
-    toc
-
+    if 0
+        fprintf('Copying local proceced binary to server at %s  \n', job.fbinary_server)
+        tic
+        [w,s]=unix(['cp -u ', job.fbinary, ' ', job.fbinary_server]); if w, warning(s), end
+        toc
+        
+        fprintf('Copying local proceced rez to server at %s  \n', job.fbinary_server)
+        tic
+        [w,s]=unix(['cp -u ', [job.results_path_temp filesep 'rez.mat'], ' ' ,...
+                    job.results_path_temp_server]); if w, warning(s), end
+        toc
+    else
+        fprintf('Skipping copy of big files to elephant\n')
+    end
     % no need to recorve server locations just jet. Phy curation must happen in
     % the same machine used for sorting
 
